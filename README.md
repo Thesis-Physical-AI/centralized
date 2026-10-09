@@ -5,3 +5,5 @@ The centralized layer serves as the high-level decision-making and coordination 
 The centralized layer communicates with the **decentralized layer**, where each robot operates as an independent node equipped with its own perception, planning, and control capabilities. VLA (Vision-Language-Action) models can translate high-level instructions and visual observations into robot-specific actions, allowing individual robots to execute assigned tasks while sharing relevant status updates with the broader system. This hierarchical architecture combines LLM-based reasoning and global coordination with decentralized autonomy, enabling robots to work together toward shared mission objectives.
 
 ![Thesis Project Proposal](assets/Thesis%20Project%20Proposal.png)
+
+[Project Timeline](https://docs.google.com/spreadsheets/d/1mE78efsMTl7ba0a20Vwiok0NrjTRiFwmU4qoNe5q53U/edit?gid=0#gid=0)
