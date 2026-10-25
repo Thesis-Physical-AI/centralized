@@ -1,0 +1,305 @@
+{
+  "mission_id": "M-001",
+  "world": {
+    "entities": {
+      "living_room": {
+        "kind": "room"
+      },
+      "kitchen": {
+        "kind": "room"
+      },
+      "kitchen_door": {
+        "kind": "door",
+        "connects": [
+          "living_room",
+          "kitchen"
+        ]
+      },
+      "landing_pad": {
+        "kind": "surface",
+        "in": "living_room"
+      },
+      "coffee_table": {
+        "kind": "surface",
+        "in": "living_room"
+      },
+      "counter": {
+        "kind": "surface",
+        "in": "kitchen"
+      },
+      "fridge": {
+        "kind": "container",
+        "in": "kitchen"
+      },
+      "apple": {
+        "kind": "object",
+        "in": "counter",
+        "weight_kg": 0.15
+      },
+      "juice_bottle": {
+        "kind": "object",
+        "in": "fridge",
+        "weight_kg": 0.45
+      }
+    },
+    "open": [],
+    "robots": {
+      "drone_1": {
+        "at": "landing_pad",
+        "airborne": false
+      },
+      "puppypi_1": {
+        "at": "coffee_table"
+      },
+      "turtlebot_1": {
+        "at": "coffee_table"
+      }
+    }
+  },
+  "allocations": [
+    {
+      "task_id": "T1",
+      "robots": [
+        "puppypi_1",
+        "drone_1"
+      ],
+      "rationale": "The kitchen door is closed and only PuppyPi can open doors; the drone then scans the kitchen fastest from above."
+    },
+    {
+      "task_id": "T2",
+      "robots": [
+        "puppypi_1"
+      ],
+      "rationale": "The apple (0.15 kg) is within PuppyPi's payload and PuppyPi is already at the kitchen door."
+    },
+    {
+      "task_id": "T3",
+      "robots": [
+        "turtlebot_1"
+      ],
+      "rationale": "The juice bottle (0.45 kg) is too heavy for PuppyPi; TurtleBot loads it onto its cargo tray to free its arm and close the fridge."
+    }
+  ],
+  "steps": [
+    {
+      "id": "S1",
+      "task_id": "T1",
+      "robot": "puppypi_1",
+      "action": "movetowards",
+      "args": {
+        "target": "kitchen_door"
+      },
+      "instruction": "[movetowards] kitchen_door",
+      "depends_on": []
+    },
+    {
+      "id": "S2",
+      "task_id": "T1",
+      "robot": "puppypi_1",
+      "action": "open",
+      "args": {
+        "target": "kitchen_door"
+      },
+      "instruction": "[open] kitchen_door",
+      "depends_on": []
+    },
+    {
+      "id": "S3",
+      "task_id": "T1",
+      "robot": "drone_1",
+      "action": "takeoff_from",
+      "args": {
+        "surface": "landing_pad"
+      },
+      "instruction": "[takeoff from] landing_pad",
+      "depends_on": []
+    },
+    {
+      "id": "S4",
+      "task_id": "T1",
+      "robot": "drone_1",
+      "action": "movetowards",
+      "args": {
+        "target": "kitchen"
+      },
+      "instruction": "[movetowards] kitchen",
+      "depends_on": [
+        "S2"
+      ]
+    },
+    {
+      "id": "S5",
+      "task_id": "T1",
+      "robot": "drone_1",
+      "action": "search",
+      "args": {
+        "object": "apple",
+        "area": "kitchen"
+      },
+      "instruction": "[search] apple in kitchen",
+      "depends_on": []
+    },
+    {
+      "id": "S6",
+      "task_id": "T1",
+      "robot": "drone_1",
+      "action": "movetowards",
+      "args": {
+        "target": "landing_pad"
+      },
+      "instruction": "[movetowards] landing_pad",
+      "depends_on": []
+    },
+    {
+      "id": "S7",
+      "task_id": "T1",
+      "robot": "drone_1",
+      "action": "land_on",
+      "args": {
+        "surface": "landing_pad"
+      },
+      "instruction": "[land on] landing_pad",
+      "depends_on": []
+    },
+    {
+      "id": "S8",
+      "task_id": "T2",
+      "robot": "puppypi_1",
+      "action": "movetowards",
+      "args": {
+        "target": "counter"
+      },
+      "instruction": "[movetowards] counter",
+      "depends_on": [
+        "S5"
+      ]
+    },
+    {
+      "id": "S9",
+      "task_id": "T2",
+      "robot": "puppypi_1",
+      "action": "grab",
+      "args": {
+        "object": "apple"
+      },
+      "instruction": "[grab] apple",
+      "depends_on": []
+    },
+    {
+      "id": "S10",
+      "task_id": "T2",
+      "robot": "puppypi_1",
+      "action": "movetowards",
+      "args": {
+        "target": "coffee_table"
+      },
+      "instruction": "[movetowards] coffee_table",
+      "depends_on": []
+    },
+    {
+      "id": "S11",
+      "task_id": "T2",
+      "robot": "puppypi_1",
+      "action": "puton",
+      "args": {
+        "object": "apple",
+        "surface": "coffee_table"
+      },
+      "instruction": "[puton] apple on coffee_table",
+      "depends_on": []
+    },
+    {
+      "id": "S12",
+      "task_id": "T3",
+      "robot": "turtlebot_1",
+      "action": "movetowards",
+      "args": {
+        "target": "fridge"
+      },
+      "instruction": "[movetowards] fridge",
+      "depends_on": [
+        "S2"
+      ]
+    },
+    {
+      "id": "S13",
+      "task_id": "T3",
+      "robot": "turtlebot_1",
+      "action": "open",
+      "args": {
+        "target": "fridge"
+      },
+      "instruction": "[open] fridge",
+      "depends_on": []
+    },
+    {
+      "id": "S14",
+      "task_id": "T3",
+      "robot": "turtlebot_1",
+      "action": "grab",
+      "args": {
+        "object": "juice_bottle"
+      },
+      "instruction": "[grab] juice_bottle",
+      "depends_on": []
+    },
+    {
+      "id": "S15",
+      "task_id": "T3",
+      "robot": "turtlebot_1",
+      "action": "puton",
+      "args": {
+        "object": "juice_bottle",
+        "surface": "turtlebot_1"
+      },
+      "instruction": "[puton] juice_bottle on turtlebot_1",
+      "depends_on": []
+    },
+    {
+      "id": "S16",
+      "task_id": "T3",
+      "robot": "turtlebot_1",
+      "action": "close",
+      "args": {
+        "target": "fridge"
+      },
+      "instruction": "[close] fridge",
+      "depends_on": []
+    },
+    {
+      "id": "S17",
+      "task_id": "T3",
+      "robot": "turtlebot_1",
+      "action": "movetowards",
+      "args": {
+        "target": "coffee_table"
+      },
+      "instruction": "[movetowards] coffee_table",
+      "depends_on": []
+    },
+    {
+      "id": "S18",
+      "task_id": "T3",
+      "robot": "turtlebot_1",
+      "action": "grab",
+      "args": {
+        "object": "juice_bottle"
+      },
+      "instruction": "[grab] juice_bottle",
+      "depends_on": []
+    },
+    {
+      "id": "S19",
+      "task_id": "T3",
+      "robot": "turtlebot_1",
+      "action": "puton",
+      "args": {
+        "object": "juice_bottle",
+        "surface": "coffee_table"
+      },
+      "instruction": "[puton] juice_bottle on coffee_table",
+      "depends_on": []
+    }
+  ],
+  "unassigned": []
+}

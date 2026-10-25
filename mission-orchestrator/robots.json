@@ -1,0 +1,253 @@
+{
+  "_comment": "Robots available to the orchestrator and the action list of each. Edit to match the deployment. Argument kinds: object, container, door, surface, room, carrier (a robot with cargo: true), any; 'object' also accepts containers and doors.",
+  "robots": [
+    {
+      "id": "drone_1",
+      "role": "Scout: searches and inspects, reaches places ground robots cannot. No payload, no manipulation.",
+      "max_payload_kg": 0,
+      "cargo": false,
+      "actions": {
+        "takeoff_from": {
+          "syntax": "[takeoff from] <surface>",
+          "args": {
+            "surface": [
+              "surface"
+            ]
+          }
+        },
+        "movetowards": {
+          "syntax": "[movetowards] <room>/<surface>/<object>",
+          "args": {
+            "target": [
+              "room",
+              "surface",
+              "object",
+              "carrier"
+            ]
+          }
+        },
+        "land_on": {
+          "syntax": "[land on] <surface>",
+          "args": {
+            "surface": [
+              "surface"
+            ]
+          }
+        },
+        "search": {
+          "syntax": "[search] <object> in <room>/<surface>/<container>",
+          "args": {
+            "object": [
+              "object"
+            ],
+            "area": [
+              "room",
+              "surface",
+              "container"
+            ]
+          }
+        },
+        "inspect": {
+          "syntax": "[inspect] <anything>",
+          "args": {
+            "target": [
+              "any"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "puppypi_1",
+      "role": "Door opener and light-object handler. Only robot that can open doors; copes with thresholds.",
+      "max_payload_kg": 0.2,
+      "cargo": false,
+      "actions": {
+        "movetowards": {
+          "syntax": "[movetowards] <room>/<surface>/<object>",
+          "args": {
+            "target": [
+              "room",
+              "surface",
+              "object",
+              "carrier"
+            ]
+          }
+        },
+        "push": {
+          "syntax": "[push] <object>",
+          "args": {
+            "object": [
+              "object"
+            ]
+          }
+        },
+        "open": {
+          "syntax": "[open] <container>/<door>",
+          "args": {
+            "target": [
+              "container",
+              "door"
+            ]
+          }
+        },
+        "close": {
+          "syntax": "[close] <container>/<door>",
+          "args": {
+            "target": [
+              "container",
+              "door"
+            ]
+          }
+        },
+        "grab": {
+          "syntax": "[grab] <object>",
+          "args": {
+            "object": [
+              "object"
+            ]
+          }
+        },
+        "putinto": {
+          "syntax": "[putinto] <object> into <container>",
+          "args": {
+            "object": [
+              "object"
+            ],
+            "container": [
+              "container"
+            ]
+          }
+        },
+        "puton": {
+          "syntax": "[puton] <object> on <surface>/<carrier>",
+          "args": {
+            "object": [
+              "object"
+            ],
+            "surface": [
+              "surface",
+              "carrier"
+            ]
+          }
+        },
+        "search": {
+          "syntax": "[search] <object> in <room>/<surface>/<container>",
+          "args": {
+            "object": [
+              "object"
+            ],
+            "area": [
+              "room",
+              "surface",
+              "container"
+            ]
+          }
+        },
+        "inspect": {
+          "syntax": "[inspect] <anything>",
+          "args": {
+            "target": [
+              "any"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "turtlebot_1",
+      "role": "Transporter: heavier objects, carries several at once on its cargo tray. Arm opens containers but not doors.",
+      "max_payload_kg": 0.5,
+      "cargo": true,
+      "actions": {
+        "movetowards": {
+          "syntax": "[movetowards] <room>/<surface>/<object>",
+          "args": {
+            "target": [
+              "room",
+              "surface",
+              "object",
+              "carrier"
+            ]
+          }
+        },
+        "dock": {
+          "syntax": "[dock] <station>",
+          "args": {
+            "station": [
+              "surface"
+            ]
+          }
+        },
+        "open": {
+          "syntax": "[open] <container>",
+          "args": {
+            "target": [
+              "container"
+            ]
+          }
+        },
+        "close": {
+          "syntax": "[close] <container>",
+          "args": {
+            "target": [
+              "container"
+            ]
+          }
+        },
+        "grab": {
+          "syntax": "[grab] <object>",
+          "args": {
+            "object": [
+              "object"
+            ]
+          }
+        },
+        "putinto": {
+          "syntax": "[putinto] <object> into <container>",
+          "args": {
+            "object": [
+              "object"
+            ],
+            "container": [
+              "container"
+            ]
+          }
+        },
+        "puton": {
+          "syntax": "[puton] <object> on <surface>/<carrier>",
+          "args": {
+            "object": [
+              "object"
+            ],
+            "surface": [
+              "surface",
+              "carrier"
+            ]
+          }
+        },
+        "search": {
+          "syntax": "[search] <object> in <room>/<surface>/<container>",
+          "args": {
+            "object": [
+              "object"
+            ],
+            "area": [
+              "room",
+              "surface",
+              "container"
+            ]
+          }
+        },
+        "inspect": {
+          "syntax": "[inspect] <anything>",
+          "args": {
+            "target": [
+              "any"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
