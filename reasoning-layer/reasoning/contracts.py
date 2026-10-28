@@ -70,7 +70,12 @@ def generation_schema() -> dict[str, Any]:
     asking Gemini to generate arbitrary JSON object keys. The orchestrator
     still receives a constraints object; its requirements remain plain language.
     """
-    source = ModelDecision.model_json_schema()
+    return compact_schema(ModelDecision)
+
+
+def compact_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """Inline model references and omit nonessential prompt-schema metadata."""
+    source = model.model_json_schema()
     definitions = source.get("$defs", {})
 
     def portable(node):

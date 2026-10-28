@@ -6,7 +6,8 @@ It follows the existing [Mission Orchestrator input](../mission-orchestrator/SKI
 
 The planner decomposes goals and task dependencies. The orchestrator owns robot
 allocation, action selection, robot-level sequencing and execution recovery.
-The Mission Interface still needs to review/validate the candidate before dispatch.
+The [connected pipeline](PIPELINE.md) adds a minimal Mission Interface gate and
+invokes the existing orchestrator skill to produce a validated dispatch plan.
 
 ## Setup
 
@@ -36,6 +37,9 @@ Check your project tier and limits in [AI Studio](https://aistudio.google.com/pr
 and Google's [pricing](https://ai.google.dev/gemini-api/docs/pricing).
 
 ## Run
+
+For the full reasoning → interface → orchestration → dispatch-validation flow, use
+[run_mission.py](PIPELINE.md). The commands below run only the reasoning stage.
 
 Inspect the planning context and output schema without making an API call:
 
@@ -126,9 +130,10 @@ report instead and never create an output file.
 These checks establish structural compatibility, not semantic correctness, physical
 feasibility, or mission success. Unsupported/ambiguous goals are addressed by the
 model prompt and decision statuses; validate them on your real scenario set.
-The existing orchestrator is an agent skill plus a dispatch-plan validator, not
-a running service. This implementation neither runs that agent nor dispatches
-commands. Execution-feedback ingestion and preserving completed work during
+The orchestrator is an agent skill plus a dispatch-plan validator. `plan_mission.py`
+only generates a candidate; `run_mission.py` invokes the orchestrator through
+Gemini and validates its dispatch plan. Neither sends robot commands.
+Execution-feedback ingestion and preserving completed work during
 mission-level replanning are future work; do not use this initial CLI to restart
 an active mission from its original request.
 
@@ -149,6 +154,10 @@ that arbitrary generated tasks can be orchestrated successfully.
 ## Files
 
 - `plan_mission.py`: command-line entry point.
+- `run_mission.py`: connected pipeline entry point; see [pipeline usage](PIPELINE.md).
+- `reasoning/interface.py`: initial handoff validation gate.
+- `reasoning/orchestration.py`: runtime adapter for the existing skill and validator.
+- `reasoning/pipeline.py`: connects the planning stages.
 - `reasoning/contracts.py`: request, decision and task validation.
 - `reasoning/planner.py`: provider-independent planning and handoff construction.
 - `reasoning/gemini.py`: official Google Gen AI SDK adapter.

@@ -33,10 +33,8 @@ def write_new_json(path: Path, payload: dict) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Generate candidate tasks for the Mission Orchestrator.")
-    parser.add_argument("--input", type=Path, required=True, help="Mission request JSON file")
-    parser.add_argument("--output", type=Path, help="New handoff file; defaults to JSON on stdout")
+def add_generation_arguments(parser):
+    """Shared provider configuration for the reasoning and connected CLIs."""
     parser.add_argument("--fleet", type=Path, default=ROOT / "mission-orchestrator/robots.json")
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env")
     parser.add_argument("--model", help="Gemini model ID; otherwise GEMINI_MODEL or gemini-3.5-flash-lite")
@@ -44,6 +42,13 @@ def main(argv=None) -> int:
     parser.add_argument("--max-output-tokens", type=int, default=2048, help="Output token budget per call")
     parser.add_argument("--max-prompt-chars", type=int, default=30000,
                         help="Character budget for system, context and schema combined")
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Generate candidate tasks for the Mission Orchestrator.")
+    parser.add_argument("--input", type=Path, required=True, help="Mission request JSON file")
+    parser.add_argument("--output", type=Path, help="New handoff file; defaults to JSON on stdout")
+    add_generation_arguments(parser)
     parser.add_argument("--max-attempts", type=int, choices=(1, 2), default=1,
                         help="Total generation attempts, including format repair")
     parser.add_argument("--dry-run", action="store_true", help="Show context/schema without an API call")
