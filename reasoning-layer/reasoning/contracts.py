@@ -94,7 +94,13 @@ def compact_schema(model: type[BaseModel]) -> dict[str, Any]:
                     "requirements": {
                         "type": "array", "items": {"type": "string"},
                         "description": "User requirements/constraints to preserve; empty if none.",
-                    }
+                    },
+                    "allowed_robots": {"type": "array", "items": {"type": "string"},
+                                       "description": "Only explicit user robot restrictions; otherwise omit."},
+                    "required_actions": {"type": "array", "items": {"type": "string"},
+                                         "description": "Required capability names from the supplied fleet; otherwise omit."},
+                    "payload_kg": {"type": "number", "minimum": 0,
+                                   "description": "Known per-object lifting requirement; otherwise omit."},
                 },
             }
         return result

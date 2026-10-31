@@ -16,6 +16,13 @@ candidate tasks through an interface gate, invoke the orchestrator skill using
 Gemini, and validate the resulting dispatch plan. This produces JSON for later
 executor integration; it does not send robot commands.
 
+The pipeline now uses the full [Structured Mission Interface](reasoning-layer/PIPELINE.md)
+for schema, world-state, active-fleet and explicit capability/payload checks. Its
+accepted tasks flow directly to the existing Gemini orchestrator; generated
+allocations are checked against the same constraints before dispatch validation.
+Run `.\.venv\Scripts\python.exe demo_pipeline.py` in VS Code for an offline replay
+through all connected layers, or use `reasoning-layer/run_mission.py` for live Gemini.
+
 ![Thesis Project Proposal](assets/Thesis%20Project%20Proposal.png)
 
 [Project Timeline](https://docs.google.com/spreadsheets/d/1mE78efsMTl7ba0a20Vwiok0NrjTRiFwmU4qoNe5q53U/edit?gid=0#gid=0)

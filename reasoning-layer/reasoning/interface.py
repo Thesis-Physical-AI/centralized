@@ -1,4 +1,4 @@
-"""Minimal Mission Interface gate between reasoning and orchestration."""
+"""Bridge the shared Structured Mission Interface into the Gemini pipeline."""
 
 import json
 from copy import deepcopy
@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import Field
 
 from .contracts import ContractError, MissionRequest, MissionTask, StrictModel, validate_context, validate_task_graph
+from structured_mission_interface import validate_mission
 
 
 class MissionHandoff(StrictModel):
@@ -15,7 +16,8 @@ class MissionHandoff(StrictModel):
     world: dict[str, Any]
 
 
-def validate_handoff(candidate: dict, request: MissionRequest, fleet: dict) -> dict:
+def validate_handoff(candidate: dict, request: MissionRequest, fleet: dict,
+                     *, warnings: list[dict] | None = None) -> dict:
     """Recheck task structure and bind a handoff to the original mission snapshot.
 
     This is a structural gate, not natural-language goal verification or the
@@ -30,4 +32,14 @@ def validate_handoff(candidate: dict, request: MissionRequest, fleet: dict) -> d
         raise ContractError("Handoff world does not match the request snapshot.")
     validate_context(request, fleet)
     validate_task_graph(handoff.tasks)
-    return deepcopy(handoff.model_dump())
+    result = validate_mission(handoff.model_dump(), fleet)
+    if not result.valid:
+        raise ContractError("Structured Mission Interface rejected the candidate: " + "; ".join(
+            f"{issue.path}: {issue.message}" for issue in result.errors))
+    if warnings is not None:
+        warnings.extend(issue.to_dict() for issue in result.warnings)
+    accepted = deepcopy(result.mission)
+    # The boundary validates a normalized copy but cannot rewrite the planner's
+    # authoritative snapshot or drop its metadata.
+    accepted["world"] = deepcopy(handoff.world)
+    return accepted

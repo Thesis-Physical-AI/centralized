@@ -15,6 +15,7 @@ class PipelineOutcome:
     status: str
     dispatch: dict | None = None
     report: dict = field(default_factory=dict)
+    interface_warnings: list[dict] = field(default_factory=list)
 
 
 class MissionPipeline:
@@ -32,16 +33,20 @@ class MissionPipeline:
                     **result.decision.model_dump(exclude={"tasks"}),
                 })
             handoff = result.handoff
-        accepted = validate_handoff(handoff, request, fleet)
+        interface_warnings = []
+        accepted = validate_handoff(handoff, request, fleet, warnings=interface_warnings)
         if on_handoff is not None:
             on_handoff(deepcopy(accepted))
-        result = self.orchestrator.orchestrate(accepted, fleet)
+        active_fleet = deepcopy(fleet)
+        active_fleet["robots"] = [robot for robot in active_fleet["robots"]
+                                  if robot["id"] in accepted["world"]["robots"]]
+        result = self.orchestrator.orchestrate(accepted, active_fleet)
         if result.plan is not None:
-            return PipelineOutcome("ready", dispatch=result.plan)
+            return PipelineOutcome("ready", dispatch=result.plan, interface_warnings=interface_warnings)
         return PipelineOutcome(result.status, report={
             "mission_id": request.mission_id,
             "status": result.status,
             "errors": result.errors,
             "warnings": result.warnings,
             "unassigned": result.unassigned,
-        })
+        }, interface_warnings=interface_warnings)

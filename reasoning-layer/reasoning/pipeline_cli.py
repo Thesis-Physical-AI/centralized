@@ -68,6 +68,8 @@ def main(argv=None) -> int:
                 print(f"Interface-accepted candidate written to {args.handoff_output}", file=sys.stderr)
 
         result = pipeline.run(request, fleet, handoff=handoff, on_handoff=save_handoff)
+        for warning in result.interface_warnings:
+            print(f"Interface review: {warning['path']}: {warning['message']}", file=sys.stderr)
         if result.dispatch is None:
             print(json.dumps(result.report, indent=2, ensure_ascii=False))
             print("No dispatch plan published.", file=sys.stderr)

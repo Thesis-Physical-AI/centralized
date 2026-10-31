@@ -3,8 +3,9 @@
 `run_mission.py` connects the two planning agents at runtime:
 
 1. The reasoning agent generates high-level candidate tasks.
-2. A minimal Mission Interface gate validates the task contract, dependency graph,
-   mission identity and unchanged world snapshot.
+2. The Structured Mission Interface validates the task contract, dependency graph,
+   mission identity, unchanged world snapshot, location consistency, active robots,
+   and explicit capability/payload constraints.
 3. Gemini receives the existing `mission-orchestrator/SKILL.md`, the accepted
    candidate and the fleet definition, then generates allocations and action steps.
 4. The application checks dispatch coverage/dependencies and runs the existing
@@ -12,8 +13,10 @@
 5. Only a complete plan with no errors or warnings is published as dispatch JSON.
 
 This command generates a plan file. It does not communicate with ROS 2 or send
-robot commands. The interface gate is an initial structural implementation;
-human approval, permissions and full semantic/policy validation are not implemented.
+robot commands. The shared `structured_mission_interface` module is connected
+through `reasoning/interface.py`. Textual requirements are preserved for the
+orchestrator with review warnings; their meaning is not machine-verified. Human
+approval, permissions and full semantic/policy validation are not implemented.
 
 ## Run from the repository root
 

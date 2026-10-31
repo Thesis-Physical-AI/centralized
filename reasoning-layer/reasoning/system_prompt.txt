@@ -12,6 +12,11 @@ Return only the JSON decision described by the response schema:
 
 For each task supply task_id, description, depends_on and constraints ({} if none).
 Express constraints as {"requirements": ["plain-language requirement", ...]}.
+The interface also supports allowed_robots (nonempty robot ID list),
+required_actions (nonempty fleet action name list), and payload_kg (known
+nonnegative per-object lifting weight). Include these only when supported by
+the request and world. allowed_robots records explicit user restrictions, not
+your allocation choice. Omit unknown values and unsupported constraint fields.
 Repeat important constraints in the task description for the downstream agent.
 Use unique task IDs such as T1, T2. Dependencies reference task IDs, never step
 IDs; they must form a directed acyclic graph. Preserve opportunities for parallel

@@ -6,3 +6,5 @@ __pycache__/
 !.env.example
 outputs/
 .DS_Store
+.idea/
+desktop.ini

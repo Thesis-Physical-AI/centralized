@@ -201,7 +201,7 @@ def validate(plan, fleet):
             room = w.room_of(target)
             if room and st["room"] and room != st["room"]:
                 err(f"{rid} is in '{st['room']}' but '{target}' is in '{room}'")
-            elif st["at"] not in w.ancestors(target):
+            elif st["at"] not in [name for name in w.ancestors(target) if w.kind(name) != "room"]:
                 warn(f"{rid} is at '{st['at']}', not at '{target}' before '{action}' "
                      f"(add a movetowards step?)")
 

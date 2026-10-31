@@ -184,3 +184,75 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(render_instruction(robot["actions"]["search"],
                                             {"object": "apple", "area": "kitchen"}),
                          "[search] apple in kitchen")
+
+    def test_full_interface_blocks_infeasible_constraints_before_orchestration(self):
+        self.decision["tasks"][1]["constraints"] = {
+            "allowed_robots": ["drone_1"], "required_actions": ["grab"], "payload_kg": 0.15}
+        provider = FakeProvider(self.decision)
+        with self.assertRaisesRegex(ContractError, "Structured Mission Interface"):
+            self.pipeline(provider).run(self.request, self.fleet)
+        self.assertEqual(len(provider.calls), 1)
+
+    def test_saved_candidate_with_invalid_constraints_uses_zero_calls(self):
+        self.handoff["tasks"][0]["constraints"] = {"unimplemented_policy": True}
+        provider = FakeProvider()
+        with self.assertRaisesRegex(ContractError, "Structured Mission Interface"):
+            self.pipeline(provider).run(self.request, self.fleet, handoff=self.handoff)
+        self.assertEqual(provider.calls, [])
+
+    def test_model_generated_text_requirements_are_preserved_and_reported(self):
+        self.decision["tasks"][2]["constraints"] = {"requirements": ["Leave the fridge closed."]}
+        provider = FakeProvider(self.decision, self.draft)
+        result = self.pipeline(provider).run(self.request, self.fleet)
+        self.assertEqual(result.status, "ready")
+        context = json.loads(provider.calls[1]["prompt"])
+        self.assertEqual(context["mission"]["tasks"][2]["constraints"],
+                         {"requirements": ["Leave the fridge closed."]})
+        self.assertTrue(any("meaning is not machine-verified" in warning["message"]
+                            for warning in result.interface_warnings))
+
+    def test_snapshot_metadata_survives_all_layers(self):
+        self.request.world["snapshot_id"] = "snapshot-42"
+        self.request.world["robots"]["drone_1"]["battery_percent"] = 80
+        provider = FakeProvider(self.decision, self.draft)
+        result = self.pipeline(provider).run(self.request, self.fleet)
+        self.assertEqual(result.status, "ready")
+        self.assertEqual(result.dispatch["world"], self.request.world)
+
+    def test_explicit_constraints_reach_orchestrator(self):
+        self.decision["tasks"][2]["constraints"] = {
+            "allowed_robots": ["turtlebot_1"], "required_actions": ["grab", "puton"], "payload_kg": 0.45}
+        provider = FakeProvider(self.decision, self.draft)
+        result = self.pipeline(provider).run(self.request, self.fleet)
+        self.assertEqual(result.status, "ready")
+        self.assertEqual(json.loads(provider.calls[1]["prompt"])["mission"]["tasks"][2]["constraints"]["payload_kg"], 0.45)
+
+    def test_dispatch_cannot_ignore_allowed_robots(self):
+        self.handoff["tasks"][0]["constraints"] = {"allowed_robots": ["puppypi_1"]}
+        result = self.pipeline(FakeProvider(self.draft)).run(self.request, self.fleet, handoff=self.handoff)
+        self.assertEqual(result.status, "invalid_dispatch")
+        self.assertTrue(any("allowed_robots" in error for error in result.report["errors"]))
+
+    def test_dispatch_cannot_omit_required_action(self):
+        self.handoff["tasks"][0]["constraints"] = {"required_actions": ["inspect"]}
+        result = self.pipeline(FakeProvider(self.draft)).run(self.request, self.fleet, handoff=self.handoff)
+        self.assertEqual(result.status, "invalid_dispatch")
+        self.assertTrue(any("required_actions" in error for error in result.report["errors"]))
+
+    def test_dispatch_handler_must_respect_declared_payload(self):
+        # TurtleBot could lift this requirement, so the interface accepts it.
+        # The generated plan instead uses PuppyPi and must be rejected.
+        self.handoff["tasks"][1]["constraints"] = {"payload_kg": 0.3}
+        result = self.pipeline(FakeProvider(self.draft)).run(self.request, self.fleet, handoff=self.handoff)
+        self.assertEqual(result.status, "invalid_dispatch")
+        self.assertTrue(any("payload_kg" in error for error in result.report["errors"]))
+
+    def test_inactive_registered_robot_is_not_sent_to_orchestrator(self):
+        extra = deepcopy(self.fleet["robots"][0])
+        extra["id"] = "inactive_drone"
+        self.fleet["robots"].append(extra)
+        provider = FakeProvider(self.decision, self.draft)
+        result = self.pipeline(provider).run(self.request, self.fleet)
+        self.assertEqual(result.status, "ready")
+        active = json.loads(provider.calls[1]["prompt"])["fleet"]["robots"]
+        self.assertNotIn("inactive_drone", {robot["id"] for robot in active})
