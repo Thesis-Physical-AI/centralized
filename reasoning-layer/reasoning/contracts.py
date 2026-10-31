@@ -134,84 +134,22 @@ def validate_task_graph(tasks: list[MissionTask]) -> None:
 
 
 def validate_context(request: MissionRequest, fleet: dict[str, Any]) -> None:
-    """Check the shape and references understood by the orchestrator world model.
+    """Use the shared interface's world/fleet checks before spending API quota."""
+    from structured_mission_interface import validate_world_context
 
-    Additional world/entity/state properties are preserved. This does not prove
-    reachability, task feasibility, or semantic alignment with the user's goal.
-    """
-    robots = fleet.get("robots")
-    if not isinstance(robots, list) or not robots:
-        raise ContractError("fleet.robots must be a non-empty list")
-    robot_ids = set()
-    for robot in robots:
-        if not isinstance(robot, dict) or not isinstance(robot.get("id"), str):
-            raise ContractError("each fleet robot needs a string id")
-        if not robot["id"].strip() or robot["id"] in robot_ids:
-            raise ContractError("fleet robot IDs must be non-blank and unique")
-        if not isinstance(robot.get("actions"), dict) or not robot["actions"]:
-            raise ContractError("each fleet robot needs an action list")
-        robot_ids.add(robot["id"])
+    result = validate_world_context(request.world, fleet)
+    if not result.valid:
+        raise ContractError("Invalid mission context: " + "; ".join(
+            f"{issue.path}: {issue.message}" for issue in result.errors))
 
-    world = request.world
-    entities = world.get("entities")
-    states = world.get("robots")
-    if not isinstance(entities, dict) or not entities:
-        raise ContractError("world.entities must be a non-empty object")
-    if not isinstance(states, dict) or not states:
-        raise ContractError("world.robots must be a non-empty object")
-    kinds = {}
-    parents = {}
-    for name, entity in entities.items():
-        kind = entity if isinstance(entity, str) else (
-            entity.get("kind") if isinstance(entity, dict) else None
-        )
-        if kind not in ("object", "container", "door", "surface", "room"):
-            raise ContractError(f"entity {name}: unsupported or missing kind")
-        if name in robot_ids:
-            raise ContractError("entity IDs must not collide with fleet robot IDs")
-        kinds[name] = kind
-        parents[name] = entity.get("in") if isinstance(entity, dict) else None
-    references = set(entities) | robot_ids
-    for name, parent in parents.items():
-        if parent is not None and (not isinstance(parent, str) or parent not in references):
-            raise ContractError(f"entity {name}: unknown parent")
-    for name in parents:
-        seen = set()
-        current = name
-        while current in parents:
-            if current in seen:
-                raise ContractError("entity containment contains a cycle")
-            seen.add(current)
-            current = parents[current]
-        if kinds[name] == "door":
-            connects = entities[name].get("connects") if isinstance(entities[name], dict) else None
-            if (not isinstance(connects, list) or len(connects) != 2
-                    or any(not isinstance(room, str) or kinds.get(room) != "room" for room in connects)
-                    or connects[0] == connects[1]):
-                raise ContractError(f"door {name}: connects must name two different rooms")
 
-    opened = world.get("open", [])
-    if not isinstance(opened, list) or any(
-        not isinstance(name, str) or kinds.get(name) not in ("door", "container")
-        for name in opened
-    ):
-        raise ContractError("world.open must list known doors or containers")
-    passages = world.get("passages", [])
-    if not isinstance(passages, list) or any(
-        not isinstance(pair, list) or len(pair) != 2 or any(
-            not isinstance(room, str) or kinds.get(room) != "room" for room in pair
-        ) for pair in passages
-    ):
-        raise ContractError("world.passages must contain pairs of known rooms")
-    for robot_id, state in states.items():
-        if robot_id not in robot_ids or not isinstance(state, dict):
-            raise ContractError("world.robots must contain states for known fleet robots")
-        for key in ("at", "holding", "room"):
-            value = state.get(key)
-            if value is not None and (not isinstance(value, str) or value not in references):
-                raise ContractError(f"robot {robot_id}: unknown {key} reference")
-        if "airborne" in state and type(state["airborne"]) is not bool:
-            raise ContractError(f"robot {robot_id}: airborne must be boolean")
+def active_fleet(fleet: dict[str, Any], world: dict[str, Any]) -> dict[str, Any]:
+    """Return a detached registry containing only observed, active robots."""
+    from copy import deepcopy
+
+    active = deepcopy(fleet)
+    active["robots"] = [robot for robot in active["robots"] if robot["id"] in world["robots"]]
+    return active
 
 
 def reject_constant(value):

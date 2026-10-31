@@ -91,6 +91,7 @@ class Fleet(TypedDict):
     robots: Annotated[list[Robot], Field(min_length=1)]
 
 
+WORLD_ADAPTER = TypeAdapter(World)
 MISSION_ADAPTER = TypeAdapter(Mission)
 FLEET_ADAPTER = TypeAdapter(Fleet)
 MISSION_SCHEMA = MISSION_ADAPTER.json_schema(by_alias=True)

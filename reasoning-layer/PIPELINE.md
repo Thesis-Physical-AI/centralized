@@ -12,6 +12,10 @@
    `mission-orchestrator/validate_plan.py` simulation checks.
 5. Only a complete plan with no errors or warnings is published as dispatch JSON.
 
+Before either model call, the same shared interface world/fleet checks reject
+invalid observations and registry entries. Both agents receive only robots
+present in `world.robots`; the complete registry is retained for input validation.
+
 This command generates a plan file. It does not communicate with ROS 2 or send
 robot commands. The shared `structured_mission_interface` module is connected
 through `reasoning/interface.py`. Textual requirements are preserved for the
@@ -86,6 +90,8 @@ operation with a changed deployment fleet.
 Checks include exact task coverage, known allocated robots, matching task/robot
 steps, valid entity references, argument syntax, dependency cycles, and the existing
 simulator's preconditions. Used robots need a known initial room.
+`allowed_robots` restricts allocations, `required_actions` must occur in the task,
+and a declared `payload_kg` requires a `grab` by a handler with sufficient capacity.
 
 The runtime uses a conservative task-dependency rule: **every step of a prerequisite
 task completes before any step of a dependent task**. This includes cleanup steps
@@ -100,6 +106,15 @@ robot actions or making an automatic model retry.
 Any validator warning holds the candidate for review. A response containing
 unassigned tasks produces a report rather than a partial dispatch file. This is
 stricter than manually accepting warnings with a written rationale in the skill.
+Interface semantic-review notices are advisory and travel separately; they do
+not claim that natural-language requirements have been mechanically verified.
+
+The simulator also rejects unordered conflicting accesses to modeled shared
+state: door/container open state, object locations, and carrier positions. For
+example, another robot's door-opening step must be an ancestor of the crossing
+step. Independent reads/tasks can remain parallel. Route checks use one available
+BFS route, so a multi-route plan may need explicit dependencies or a richer route
+contract; these checks do not prove geometric collision freedom.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -113,7 +128,8 @@ orchestration stage without repeating reasoning.
 
 ## Scope of the checks
 
-The existing validator simulates a dependency ordering in a simplified world.
+The validator simulates a dependency ordering in a simplified world and checks
+ordering for the modeled shared-state accesses.
 Passing it does not prove that every parallel interleaving is safe, that a task's
 natural-language goal is achieved, or that a real robot can execute the plan.
 Execution feedback, observation-driven world updates, mission-level replanning,
@@ -123,10 +139,13 @@ and actual executor integration remain separate work.
 
 ```bash
 uv run python -m unittest discover -s reasoning-layer/tests -t reasoning-layer -v
+uv run python -m unittest discover -s tests -v
+uv run python demo_pipeline.py
 ```
 
 Pipeline tests mock the two model responses while exercising the actual interface
 gate, orchestration adapter, instruction renderer, dispatch contract checks and
 existing simulator validator. The test dispatch adapts the original example's
-search dependency to the stricter task-completion barrier; the original example
-and validator are left unchanged.
+search dependency to the stricter task-completion barrier. The original example
+is unchanged; the validator additionally checks shared-state ordering and rejects
+using room-level location alone as evidence of manipulation proximity.

@@ -153,6 +153,31 @@ class PlannerTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ContractError):
                 parse_json(text)
 
+    def test_shared_context_checks_block_invalid_observations_without_api_calls(self):
+        for mutate in (
+            lambda w: w["robots"]["drone_1"].update(room="kitchen"),
+            lambda w: w["robots"]["puppypi_1"].update(airborne=True),
+            lambda w: w["entities"]["apple"].update(weight_kg=float("inf")),
+            lambda w: w["robots"]["drone_1"].pop("at"),
+        ):
+            with self.subTest(mutate=mutate):
+                request = self.request.model_copy(deep=True)
+                mutate(request.world)
+                provider = FakeProvider(self.decision)
+                with self.assertRaises(ContractError):
+                    MissionPlanner(provider).plan(request, self.fleet)
+                self.assertEqual(provider.calls, [])
+
+    def test_reasoning_sees_only_active_fleet_without_changing_registry(self):
+        offline = deepcopy(self.fleet["robots"][0])
+        offline["id"] = "inactive_drone"
+        self.fleet["robots"].append(offline)
+        provider = FakeProvider({"status": "needs_clarification", "questions": ["Which room?"]})
+        MissionPlanner(provider).plan(self.request, self.fleet)
+        active = json.loads(provider.calls[0]["prompt"])["fleet"]["robots"]
+        self.assertNotIn("inactive_drone", {r["id"] for r in active})
+        self.assertIn("inactive_drone", {r["id"] for r in self.fleet["robots"]})
+
     def test_existing_dispatch_validator_accepts_unchanged_example(self):
         path = ROOT / "mission-orchestrator/validate_plan.py"
         spec = importlib.util.spec_from_file_location("dispatch_validator", path)

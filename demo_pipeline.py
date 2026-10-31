@@ -1,4 +1,4 @@
-"""Replay example model responses through the real pipeline without API calls."""
+"""Replay repository fixture responses through the real pipeline without API calls."""
 import json
 from pathlib import Path
 import sys
@@ -12,7 +12,7 @@ from reasoning.pipeline import MissionPipeline
 from reasoning.planner import MissionPlanner
 
 
-class RecordedDemoProvider:
+class FixtureDemoProvider:
     def __init__(self, *responses):
         self.responses = iter(responses)
         self.calls = 0
@@ -37,14 +37,14 @@ def main():
                   for step in reference["steps"]],
         "unassigned": reference["unassigned"],
     }
-    provider = RecordedDemoProvider(decision, draft)
+    provider = FixtureDemoProvider(decision, draft)
     result = MissionPipeline(MissionPlanner(provider), MissionOrchestrator(provider)).run(request, fleet)
     print(json.dumps({
-        "mode": "offline_demo_with_recorded_model_responses",
+        "mode": "offline_demo_with_fixture_responses",
         "status": result.status,
         "mission_id": request.mission_id,
         "layers": ["reasoning", "structured_mission_interface", "orchestrator", "dispatch_validation"],
-        "recorded_responses_consumed": provider.calls,
+        "fixture_responses_consumed": provider.calls,
         "api_calls": 0,
         "sends_robot_commands": False,
         "interface_warnings": result.interface_warnings,

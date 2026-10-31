@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from copy import deepcopy
 from typing import Callable
 
-from .contracts import MissionRequest
+from .contracts import MissionRequest, active_fleet
 from .interface import validate_handoff
 from .orchestration import MissionOrchestrator
 from .planner import MissionPlanner
@@ -37,10 +37,7 @@ class MissionPipeline:
         accepted = validate_handoff(handoff, request, fleet, warnings=interface_warnings)
         if on_handoff is not None:
             on_handoff(deepcopy(accepted))
-        active_fleet = deepcopy(fleet)
-        active_fleet["robots"] = [robot for robot in active_fleet["robots"]
-                                  if robot["id"] in accepted["world"]["robots"]]
-        result = self.orchestrator.orchestrate(accepted, active_fleet)
+        result = self.orchestrator.orchestrate(accepted, active_fleet(fleet, accepted["world"]))
         if result.plan is not None:
             return PipelineOutcome("ready", dispatch=result.plan, interface_warnings=interface_warnings)
         return PipelineOutcome(result.status, report={

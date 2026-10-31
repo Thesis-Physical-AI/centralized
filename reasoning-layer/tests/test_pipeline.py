@@ -247,6 +247,20 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result.status, "invalid_dispatch")
         self.assertTrue(any("payload_kg" in error for error in result.report["errors"]))
 
+    def test_payload_requirement_cannot_be_satisfied_by_search_only(self):
+        self.handoff["tasks"][0]["constraints"] = {"payload_kg": 0.45}
+        result = self.pipeline(FakeProvider(self.draft)).run(self.request, self.fleet, handoff=self.handoff)
+        self.assertEqual(result.status, "invalid_dispatch")
+        self.assertTrue(any("lifting" in error for error in result.report["errors"]))
+
+    def test_cross_robot_door_dependency_is_required(self):
+        self.draft["steps"][3]["depends_on"] = []
+        result = self.pipeline(FakeProvider(self.draft)).run(self.request, self.fleet, handoff=self.handoff)
+        self.assertEqual(result.status, "invalid_dispatch")
+        self.assertIsNone(result.dispatch)
+        self.assertTrue(any("unordered shared-state" in error and "open:kitchen_door" in error
+                            for error in result.report["errors"]))
+
     def test_inactive_registered_robot_is_not_sent_to_orchestrator(self):
         extra = deepcopy(self.fleet["robots"][0])
         extra["id"] = "inactive_drone"

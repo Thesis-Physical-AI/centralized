@@ -78,6 +78,23 @@ class PipelineCliTests(unittest.TestCase):
         provider.assert_not_called()
 
     @patch("reasoning.pipeline_cli.GeminiProvider")
+    def test_bad_world_is_rejected_before_provider_including_dry_run(self, provider):
+        request = json.loads(self.input.read_text())
+        request["world"]["robots"]["drone_1"]["room"] = "kitchen"
+        source = self.input
+        self.input = self.directory / "bad-world.json"
+        self.input.write_text(json.dumps(request))
+        try:
+            for args in ([], ["--dry-run"]):
+                with self.subTest(args=args):
+                    code, stdout, stderr = self.invoke(*args)
+                    self.assertEqual(code, 2)
+                    self.assertIn("room disagrees", stderr)
+                    provider.assert_not_called()
+        finally:
+            self.input = source
+
+    @patch("reasoning.pipeline_cli.GeminiProvider")
     def test_dry_run_displays_two_call_budget_without_provider(self, provider):
         code, stdout, stderr = self.invoke("--dry-run")
         self.assertEqual(code, 0)

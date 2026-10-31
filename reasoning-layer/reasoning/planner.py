@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from .contracts import ContractError, MissionRequest, ModelDecision, generation_schema, parse_json, validate_context
+from .contracts import ContractError, MissionRequest, ModelDecision, active_fleet, generation_schema, parse_json, validate_context
 
 SYSTEM_PROMPT = Path(__file__).with_name("system_prompt.txt").read_text(encoding="utf-8")
 
@@ -33,7 +33,7 @@ def build_prompt(request: MissionRequest, fleet: dict[str, Any]) -> str:
         "mission_id": request.mission_id,
         "natural_language": request.natural_language,
         "world": request.world,
-        "fleet": fleet,
+        "fleet": active_fleet(fleet, request.world),
     }, ensure_ascii=False, allow_nan=False)
 
 

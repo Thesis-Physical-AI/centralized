@@ -20,8 +20,11 @@ The pipeline now uses the full [Structured Mission Interface](reasoning-layer/PI
 for schema, world-state, active-fleet and explicit capability/payload checks. Its
 accepted tasks flow directly to the existing Gemini orchestrator; generated
 allocations are checked against the same constraints before dispatch validation.
-Run `.\.venv\Scripts\python.exe demo_pipeline.py` in VS Code for an offline replay
+Run `uv run python demo_pipeline.py` for an offline replay
 through all connected layers, or use `reasoning-layer/run_mission.py` for live Gemini.
+
+See [the architecture review](ARCHITECTURE_REVIEW.md) for layer responsibilities,
+validation fixes, test evidence and the remaining execution/feedback work.
 
 ![Thesis Project Proposal](assets/Thesis%20Project%20Proposal.png)
 

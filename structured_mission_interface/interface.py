@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .schema import FLEET_ADAPTER, FLEET_SCHEMA, MISSION_ADAPTER, MISSION_SCHEMA
+from .schema import FLEET_ADAPTER, MISSION_ADAPTER, WORLD_ADAPTER
 
 DEFAULT_FLEET = Path(__file__).resolve().parents[1] / "mission-orchestrator" / "robots.json"
 
@@ -47,8 +47,7 @@ def _path(parts):
     return "/" + "/".join(str(p).replace("~", "~0").replace("/", "~1") for p in parts)
 
 
-def _schema_errors(value, schema, prefix=()):
-    adapter = MISSION_ADAPTER if schema is MISSION_SCHEMA else FLEET_ADAPTER
+def _schema_errors(value, adapter, prefix=()):
     try:
         adapter.validate_python(value)
     except ValidationError as exc:
@@ -75,34 +74,28 @@ def _json_errors(value, parts=()):
     return []
 
 
-def validate_mission(candidate, fleet=None):
-    """Return errors or a detached, normalized orchestrator input.
+def validate_world_context(world, fleet):
+    """Validate observations and registry before any model call, without tasks."""
+    errors = []
+    for value, adapter, prefix in ((world, WORLD_ADAPTER, ("world",)),
+                                   (fleet, FLEET_ADAPTER, ("fleet",))):
+        errors.extend(_json_errors(value, prefix) or _schema_errors(value, adapter, prefix))
+    if not errors:
+        normalized = deepcopy(world)
+        normalized.setdefault("open", [])
+        normalized.setdefault("passages", [])
+        normalized["entities"] = {name: {"kind": entity} if isinstance(entity, str) else entity
+                                  for name, entity in normalized["entities"].items()}
+        errors.extend(_world_errors(normalized, fleet))
+    return ValidationResult(tuple(errors))
 
-    Candidate and fleet are JSON-compatible objects. Omitted fleet loads the
-    repository registry; only robots present in world.robots are active.
-    """
-    errors, warnings = [], []
+
+def _world_errors(world, fleet):
+    errors = []
 
     def error(path, code, message):
         errors.append(Issue(path, code, message))
 
-    if fleet is None:
-        try:
-            fleet = load_json(DEFAULT_FLEET)
-        except (OSError, ValueError) as exc:
-            return ValidationResult((Issue("/fleet", "fleet_load", str(exc)),))
-    for value, schema, prefix in ((candidate, MISSION_SCHEMA, ()), (fleet, FLEET_SCHEMA, ("fleet",))):
-        json_errors = _json_errors(value, prefix)
-        errors.extend(json_errors or _schema_errors(value, schema, prefix))
-    if errors:
-        return ValidationResult(tuple(errors))
-
-    mission = deepcopy(candidate)
-    world = mission["world"]
-    world.setdefault("open", [])
-    world.setdefault("passages", [])
-    world["entities"] = {name: {"kind": entity} if isinstance(entity, str) else entity
-                         for name, entity in world["entities"].items()}
     robots = {}
     for i, robot in enumerate(fleet["robots"]):
         rid = robot["id"]
@@ -209,6 +202,41 @@ def validate_mission(candidate, fleet=None):
         if parent in states and parent in robots and states[parent].get("holding") != name and not robots[parent]["cargo"]:
             error("/world/entities/" + name + "/in", "unsupported_cargo", "object on a robot must be held or supported by a cargo tray")
 
+    return errors
+
+
+def validate_mission(candidate, fleet=None):
+    """Return errors or a detached, normalized orchestrator input.
+
+    Candidate and fleet are JSON-compatible objects. Omitted fleet loads the
+    repository registry; only robots present in world.robots are active.
+    """
+    errors, warnings = [], []
+
+    def error(path, code, message):
+        errors.append(Issue(path, code, message))
+
+    if fleet is None:
+        try:
+            fleet = load_json(DEFAULT_FLEET)
+        except (OSError, ValueError) as exc:
+            return ValidationResult((Issue("/fleet", "fleet_load", str(exc)),))
+    for value, schema, prefix in ((candidate, MISSION_ADAPTER, ()), (fleet, FLEET_ADAPTER, ("fleet",))):
+        json_errors = _json_errors(value, prefix)
+        errors.extend(json_errors or _schema_errors(value, schema, prefix))
+    if errors:
+        return ValidationResult(tuple(errors))
+
+    mission = deepcopy(candidate)
+    world = mission["world"]
+    world.setdefault("open", [])
+    world.setdefault("passages", [])
+    world["entities"] = {name: {"kind": entity} if isinstance(entity, str) else entity
+                         for name, entity in world["entities"].items()}
+    errors.extend(_world_errors(world, fleet))
+
+    robots = {robot["id"]: robot for robot in fleet["robots"]}
+    states = world["robots"]
     tasks, dependencies = {}, {}
     for i, task in enumerate(mission["tasks"]):
         path = f"/tasks/{i}"
