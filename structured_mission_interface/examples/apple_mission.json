@@ -1,0 +1,28 @@
+{
+  "mission_id": "M-APPLE",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "description": "Pick up the apple from the table.",
+      "constraints": {
+        "allowed_robots": ["puppypi_1"],
+        "required_actions": ["grab"],
+        "payload_kg": 0.15
+      }
+    }
+  ],
+  "world": {
+    "entities": {
+      "lab": {"kind": "room"},
+      "table": {"kind": "surface", "in": "lab"},
+      "apple": {
+        "kind": "object",
+        "in": "table",
+        "weight_kg": 0.15
+      }
+    },
+    "robots": {
+      "puppypi_1": {"at": "table"}
+    }
+  }
+}

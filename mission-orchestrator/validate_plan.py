@@ -79,8 +79,10 @@ class World:
                 "holding": init.get("holding"),
                 "airborne": init.get("airborne", False),
             }
-            if self.state[rid]["room"] is None and init.get("at"):
-                self.state[rid]["room"] = self.room_of(init["at"])
+        # Resolve carried-robot locations only after every state exists.
+        for rid, state in self.state.items():
+            if state["room"] is None and state["at"]:
+                state["room"] = self.room_of(state["at"])
 
     def kind(self, name):
         if name in self.robots:
@@ -94,7 +96,8 @@ class World:
         if name is None or _depth > 20:
             return None
         if name in self.robots:
-            return self.state[name]["room"]
+            state = self.state[name]
+            return state["room"] or self.room_of(state["at"], _depth + 1)
         if self.kind(name) == "room":
             return name
         return self.room_of(self.parent(name), _depth + 1)
@@ -108,24 +111,28 @@ class World:
         return chain
 
     def path_exists(self, start, goal):
-        """BFS between rooms through open doors and always-open passages."""
+        return self.path_doors(start, goal) is not None
+
+    def path_doors(self, start, goal):
+        """Return doors on one available BFS route, or None if disconnected."""
         if start is None or goal is None or start == goal:
-            return True
-        edges = list(self.passages)
+            return []
+        edges = [(a, b, None) for a, b in self.passages]
         for name, e in self.entities.items():
             if e.get("kind") == "door" and name in self.open and len(e.get("connects", [])) == 2:
-                edges.append(tuple(e["connects"]))
-        seen, queue = {start}, deque([start])
+                edges.append((*e["connects"], name))
+        seen, queue = {start}, deque([(start, [])])
         while queue:
-            room = queue.popleft()
-            for a, b in edges:
+            room, doors = queue.popleft()
+            for a, b, door in edges:
                 for x, y in ((a, b), (b, a)):
                     if x == room and y not in seen:
+                        route = doors + ([door] if door else [])
                         if y == goal:
-                            return True
+                            return route
                         seen.add(y)
-                        queue.append(y)
-        return False
+                        queue.append((y, route))
+        return None
 
     def closed_doors_between(self, start, goal):
         return [n for n, e in self.entities.items()
@@ -179,8 +186,29 @@ def validate(plan, fleet):
         if kind_ok:
             static_ok.add(sid)
 
+    # Do not let a lucky simulator ordering hide missing cross-robot dependencies.
+    order = topo_order(steps, errors)
+    ancestors, previous = {}, {}
+    for step in steps:
+        deps = set(step.get("depends_on", []))
+        if step["robot"] in previous:
+            deps.add(previous[step["robot"]])
+        previous[step["robot"]] = step["id"]
+        ancestors[step["id"]] = deps
+    for sid in order:
+        ancestors[sid] = set(ancestors[sid]).union(
+            *(ancestors.get(dep, set()) for dep in ancestors[sid]))
+    accesses = {}
+
+    def access(resource, sid, write=False):
+        for earlier, earlier_write in accesses.get(resource, []):
+            if earlier != sid and (write or earlier_write) and earlier not in ancestors[sid]:
+                errors.append(f"{sid}: unordered shared-state access with {earlier} "
+                              f"on {resource}; add a dependency")
+        accesses.setdefault(resource, []).append((sid, write))
+
     # Dynamic checks: simulate in dependency order.
-    for sid in topo_order(steps, errors):
+    for sid in order:
         if sid not in static_ok:
             continue
         s = by_id[sid]
@@ -195,13 +223,21 @@ def validate(plan, fleet):
         def warn(msg):
             warnings.append(f"{sid}: {msg}")
 
+        def read_location(target):
+            for name in w.ancestors(target):
+                if name in robots:
+                    access(f"position:{name}", sid)
+                elif w.kind(name) != "room":
+                    access(f"location:{name}", sid)
+
         def require_near(target):
+            read_location(target)
             if rid in w.ancestors(target):
                 return  # on its own cargo tray
             room = w.room_of(target)
             if room and st["room"] and room != st["room"]:
                 err(f"{rid} is in '{st['room']}' but '{target}' is in '{room}'")
-            elif st["at"] not in w.ancestors(target):
+            elif st["at"] not in [name for name in w.ancestors(target) if w.kind(name) != "room"]:
                 warn(f"{rid} is at '{st['at']}', not at '{target}' before '{action}' "
                      f"(add a movetowards step?)")
 
@@ -209,10 +245,13 @@ def validate(plan, fleet):
             if st["holding"]:
                 err(f"{rid} is holding '{st['holding']}' and cannot {action}")
 
+        # Other robots can interact with cargo on this robot; its position is shared.
+        access(f"position:{rid}", sid, write=action in {"movetowards", "dock", "land_on"})
         if is_drone and action != "takeoff_from" and not st["airborne"]:
             err(f"{rid} must take off before '{action}'")
 
         if action == "takeoff_from":
+            read_location(args["surface"])
             if st["airborne"]:
                 err(f"{rid} is already airborne")
             elif st["at"] and st["at"] != args["surface"]:
@@ -220,6 +259,7 @@ def validate(plan, fleet):
             st["airborne"] = True
 
         elif action == "land_on":
+            read_location(args["surface"])
             if st["at"] != args["surface"]:
                 warn(f"{rid} should movetowards '{args['surface']}' before landing")
             st["airborne"] = False
@@ -228,6 +268,7 @@ def validate(plan, fleet):
 
         elif action in ("movetowards", "dock"):
             target = args.get("target") or args.get("station")
+            read_location(target)
             if target == rid:
                 err(f"{rid} cannot move towards itself")
                 continue
@@ -236,22 +277,28 @@ def validate(plan, fleet):
                 goal = st["room"] if st["room"] in sides else (sides[0] if sides else None)
             else:
                 goal = w.room_of(target)
-            if not w.path_exists(st["room"], goal):
+            route = w.path_doors(st["room"], goal)
+            if route is None:
                 blocking = w.closed_doors_between(st["room"], goal)
                 err(f"{rid} cannot reach '{goal}' from '{st['room']}'; closed door(s): "
                     f"{', '.join(blocking) or 'none known, no connection'}")
+            else:
+                for door in route:
+                    access(f"open:{door}", sid)
             st["at"] = target
             st["room"] = goal or st["room"]
             # Objects on a cargo tray travel with the robot (rooms resolve dynamically).
 
         elif action in ("search", "inspect"):
             area = args.get("area") or args.get("target")
+            read_location(area)
             room = w.room_of(area)
             if room and st["room"] and room != st["room"]:
                 warn(f"{rid} is in '{st['room']}' but '{area}' is in '{room}'")
 
         elif action in ("open", "close"):
             target = args["target"]
+            access(f"open:{target}", sid, write=True)
             require_near(target)
             require_free_gripper()
             if action == "open":
@@ -265,6 +312,7 @@ def validate(plan, fleet):
 
         elif action == "push":
             require_near(args["object"])
+            access(f"location:{args['object']}", sid, write=True)
 
         elif action == "grab":
             obj = args["object"]
@@ -274,18 +322,22 @@ def validate(plan, fleet):
             if holder in w.robots and w.state.get(holder, {}).get("holding") == obj:
                 err(f"'{obj}' is held by {holder}")
             for anc in w.ancestors(obj)[1:]:
-                if w.kind(anc) == "container" and anc not in w.open:
-                    err(f"'{obj}' is inside closed container '{anc}'")
-                    break
+                if w.kind(anc) == "container":
+                    access(f"open:{anc}", sid)
+                    if anc not in w.open:
+                        err(f"'{obj}' is inside closed container '{anc}'")
+                        break
             weight = w.entities.get(obj, {}).get("weight_kg")
             limit = robot.get("max_payload_kg")
             if weight is not None and limit is not None and weight > limit:
                 err(f"'{obj}' weighs {weight} kg; {rid} can lift at most {limit} kg")
             st["holding"] = obj
+            access(f"location:{obj}", sid, write=True)
             w.entities.setdefault(obj, {"kind": "object"})["in"] = rid
 
         elif action in ("putinto", "puton"):
             obj = args["object"]
+            access(f"location:{obj}", sid, write=True)
             place = args.get("container") or args.get("surface")
             if st["holding"] != obj:
                 err(f"{rid} is not holding '{obj}' (holding: {st['holding']})")
@@ -296,8 +348,10 @@ def validate(plan, fleet):
                     err(f"{rid} cannot {action} onto itself")
             else:
                 require_near(place)
-            if action == "putinto" and place not in w.open:
-                err(f"container '{place}' is not open")
+            if action == "putinto":
+                access(f"open:{place}", sid)
+                if place not in w.open:
+                    err(f"container '{place}' is not open")
             st["holding"] = None
             w.entities.setdefault(obj, {"kind": "object"})["in"] = place
 

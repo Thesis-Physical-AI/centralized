@@ -6,6 +6,26 @@ The centralized layer communicates with the **decentralized layer**, where each 
 
 The Mission Orchestrator is implemented as an agent skill — see [mission-orchestrator/](mission-orchestrator/SKILL.md).
 
+The first executable Mission Planner uses Google AI Studio's Gemini API to produce
+candidate tasks in the orchestrator's input format. See
+[reasoning-layer/](reasoning-layer/README.md) for setup, a sample mission, and tests.
+It leaves robot allocation and dispatch actions to the orchestrator.
+
+Run [the connected pipeline](reasoning-layer/PIPELINE.md) to automatically pass
+candidate tasks through an interface gate, invoke the orchestrator skill using
+Gemini, and validate the resulting dispatch plan. This produces JSON for later
+executor integration; it does not send robot commands.
+
+The pipeline now uses the full [Structured Mission Interface](reasoning-layer/PIPELINE.md)
+for schema, world-state, active-fleet and explicit capability/payload checks. Its
+accepted tasks flow directly to the existing Gemini orchestrator; generated
+allocations are checked against the same constraints before dispatch validation.
+Run `uv run python demo_pipeline.py` for an offline replay
+through all connected layers, or use `reasoning-layer/run_mission.py` for live Gemini.
+
+See [the architecture review](ARCHITECTURE_REVIEW.md) for layer responsibilities,
+validation fixes, test evidence and the remaining execution/feedback work.
+
 ![Thesis Project Proposal](assets/Thesis%20Project%20Proposal.png)
 
 [Project Timeline](https://docs.google.com/spreadsheets/d/1mE78efsMTl7ba0a20Vwiok0NrjTRiFwmU4qoNe5q53U/edit?gid=0#gid=0)

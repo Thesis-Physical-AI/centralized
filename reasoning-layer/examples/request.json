@@ -1,0 +1,60 @@
+{
+  "mission_id": "M-001",
+  "natural_language": "Find the apple in the kitchen and bring it and the juice from the fridge to the coffee table.",
+  "world": {
+    "entities": {
+      "living_room": {
+        "kind": "room"
+      },
+      "kitchen": {
+        "kind": "room"
+      },
+      "kitchen_door": {
+        "kind": "door",
+        "connects": [
+          "living_room",
+          "kitchen"
+        ]
+      },
+      "landing_pad": {
+        "kind": "surface",
+        "in": "living_room"
+      },
+      "coffee_table": {
+        "kind": "surface",
+        "in": "living_room"
+      },
+      "counter": {
+        "kind": "surface",
+        "in": "kitchen"
+      },
+      "fridge": {
+        "kind": "container",
+        "in": "kitchen"
+      },
+      "apple": {
+        "kind": "object",
+        "in": "counter",
+        "weight_kg": 0.15
+      },
+      "juice_bottle": {
+        "kind": "object",
+        "in": "fridge",
+        "weight_kg": 0.45
+      }
+    },
+    "open": [],
+    "robots": {
+      "drone_1": {
+        "at": "landing_pad",
+        "airborne": false
+      },
+      "puppypi_1": {
+        "at": "coffee_table"
+      },
+      "turtlebot_1": {
+        "at": "coffee_table"
+      }
+    }
+  }
+}

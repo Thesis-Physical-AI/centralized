@@ -1,0 +1,13 @@
+[project]
+name = "physical-ai-centralized"
+version = "0.1.0"
+description = "Mission-level reasoning for the centralized multi-robot coordination layer"
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai>=1.55,<3",
+    "pydantic>=2.10,<3",
+    "python-dotenv>=1.0,<2",
+]
+
+[tool.uv]
+package = false
