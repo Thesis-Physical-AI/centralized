@@ -1,5 +1,14 @@
 # Centralized Coordination Layer
 
+> **System documentation (source of truth for both repos):**
+> [Architecture](docs/SYSTEM_ARCHITECTURE.md) ·
+> [Interface contracts](docs/INTERFACE_CONTRACTS.md) ·
+> [Open decisions](docs/DECISIONS.md) ·
+> [Model selection](docs/MODEL_SELECTION.md) ·
+> [Roadmap & risks](docs/ROADMAP.md) ·
+> [Agent workflow](docs/AGENT_WORKFLOW.md).
+> Component status is tracked in §13 of the architecture document.
+
 The centralized layer serves as the high-level decision-making and coordination hub of the multi-robot system. It translates natural-language mission descriptions into structured objectives, using an LLM-powered **Mission Planner** to decompose complex tasks into executable subtasks. The **Mission Interface** provides a standardized communication bridge between the centralized intelligence and the decentralized robot network, while the **Mission Orchestrator** manages task allocation, execution sequencing, inter-robot dependencies, and overall mission progress. By coordinating these components, the centralized layer maintains a global view of the mission and enables collaborative task execution across heterogeneous robots.
 
 The centralized layer communicates with the **decentralized layer**, where each robot operates as an independent node equipped with its own perception, planning, and control capabilities. VLA (Vision-Language-Action) models can translate high-level instructions and visual observations into robot-specific actions, allowing individual robots to execute assigned tasks while sharing relevant status updates with the broader system. This hierarchical architecture combines LLM-based reasoning and global coordination with decentralized autonomy, enabling robots to work together toward shared mission objectives.

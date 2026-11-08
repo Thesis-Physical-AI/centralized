@@ -1,0 +1,19 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - name: Reasoning-layer tests
+        run: uv run python -m unittest discover -s reasoning-layer/tests -t reasoning-layer
+      - name: Interface + dispatch tests
+        run: uv run python -m unittest discover -s tests
+      - name: Offline pipeline demo (no API key)
+        run: uv run python demo_pipeline.py
