@@ -23,6 +23,10 @@ allocations are checked against the same constraints before dispatch validation.
 Run `uv run python demo_pipeline.py` for an offline replay
 through all connected layers, or use `reasoning-layer/run_mission.py` for live Gemini.
 
+Saved robot execution reports can now be ingested into a validated feedback
+snapshot with conservative world updates; see [execution feedback](FEEDBACK.md).
+This separate offline entry point does not yet perform automatic replanning.
+
 See [the architecture review](ARCHITECTURE_REVIEW.md) for layer responsibilities,
 validation fixes, test evidence and the remaining execution/feedback work.
 
