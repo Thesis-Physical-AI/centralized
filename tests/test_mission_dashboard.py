@@ -134,6 +134,102 @@ class DashboardTests(unittest.TestCase):
                     self.assertEqual(state["status"], "error")
                     self.assertIn("Model output failed the task contract", state["message"])
 
+    def worlds_dir(self, folder):
+        worlds = Path(folder) / "worlds"
+        worlds.mkdir()
+        demo = Path(__file__).resolve().parents[1] / "worlds/demo_living_room.json"
+        (worlds / demo.name).write_text(demo.read_text())
+        return worlds
+
+    def test_demo_world_is_listed_read_only_and_custom_worlds_validate(self):
+        with tempfile.TemporaryDirectory() as folder:
+            console = Console(Path(folder) / "out", self.worlds_dir(folder))
+            [demo] = console.list_worlds()
+            self.assertTrue(demo["demo"])
+            self.assertIn("isaac_sim", demo["backends"])
+            with self.assertRaises(ValueError):
+                console.save_world({"id": "demo_living_room", "name": "Hacked", "world": demo["world"]})
+            with self.assertRaises(ValueError):
+                console.delete_world("demo_living_room")
+            world = {"entities": {"kitchen": {"kind": "room"}, "mug": {"kind": "object", "in": "kitchen"}},
+                     "robots": {"turtlebot_1": {"at": "kitchen"}}}
+            saved = console.save_world({"name": "Kitchen test", "world": world, "samples": ["Find the mug."]})
+            self.assertEqual(saved["id"], "kitchen_test")
+            self.assertEqual(saved["backends"], ["plan_only", "external"])
+            self.assertEqual(console.save_world({"name": "Kitchen test", "world": world})["id"], "kitchen_test_2")
+            world["entities"]["mug"]["in"] = "pantry"
+            with self.assertRaisesRegex(ValueError, "unknown or inactive parent"):
+                console.save_world({"id": "kitchen_test", "name": "Kitchen", "world": world})
+            with self.assertRaisesRegex(ValueError, "not in the fleet"):
+                console.save_world({"name": "Bad", "world": {"entities": {"r": {"kind": "room"}},
+                                                             "robots": {"ghost_9": {"at": "r"}}}})
+            with self.assertRaisesRegex(ValueError, "no Isaac Sim scene"):
+                console.submit("Find the mug", "vlm", "kitchen_test", "isaac_sim")
+            console.delete_world("kitchen_test")
+            self.assertEqual([w["id"] for w in console.list_worlds()], ["demo_living_room", "kitchen_test_2"])
+
+    def test_plan_only_uses_selected_world_and_stops_after_planning(self):
+        with tempfile.TemporaryDirectory() as folder:
+            console = FakeConsole(Path(folder) / "out")
+            console.worlds = self.worlds_dir(folder)
+            world = {"entities": {"living_room": {"kind": "room"}, "apple": {"kind": "object", "in": "living_room"},
+                                  "toy": {"kind": "object", "in": "living_room"}},
+                     "robots": {"puppypi_1": {"at": "living_room"}}}
+            world_id = console.save_world({"name": "Bare room", "world": world})["id"]
+            with patch("mission_dashboard.Thread"):
+                identity = console.submit("Find the apple", "vlm", world_id, "plan_only")
+            console.run(identity)
+            state = console.state()
+            self.assertEqual(state["status"], "planned")
+            self.assertEqual(console.commands, ["planning"])
+            request = json.loads((console.output / identity / "request.json").read_text())
+            self.assertEqual(request["world"], world)
+
+    def test_external_backend_waits_for_robot_report_then_ingests_feedback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            console = FakeConsole(Path(folder) / "out")
+            console.worlds = self.worlds_dir(folder)
+            with patch("mission_dashboard.Thread"):
+                identity = console.submit("Find the apple and toy.", "vlm", "demo_living_room", "external")
+            worker = Thread(target=console.run, args=(identity,))
+            worker.start()
+            deadline = time.monotonic() + 5
+            while console.state()["stage"] != "execution" and time.monotonic() < deadline:
+                time.sleep(.02)
+            mid = "M-" + identity
+            steps = [{"mission_id": mid, "plan_revision": 0, "step_id": "S1", "robot_id": "puppypi_1",
+                      "attempt": 1, "status": "SUCCEEDED", "reason_code": "", "observations": []},
+                     {"mission_id": mid, "plan_revision": 0, "step_id": "S2", "robot_id": "puppypi_1",
+                      "attempt": 1, "status": "BLOCKED", "reason_code": "OBJECT_NOT_FOUND", "observations": []}]
+            report = {"mission_id": mid, "execution": {"mission_id": mid, "plan_revision": 0,
+                                                      "status": "HALTED", "steps": steps}}
+            with self.assertRaisesRegex(ValueError, "mission_id"):
+                console.receive_report(identity, {**report, "mission_id": "M-other"})
+            console.receive_report(identity, report)
+            worker.join(10)
+            state = console.state()
+            self.assertEqual(state["status"], "needs_attention", state["message"])
+            self.assertEqual(state["completed"], ["planning", "execution", "feedback", "replanning"])
+            self.assertNotIn("simulation", console.commands)
+            self.assertNotIn("vlm", console.commands)
+            with self.assertRaises(ValueError):
+                console.receive_report(identity, report)
+
+    def test_http_report_accepts_local_scripts_but_missions_need_dashboard_origin(self):
+        with tempfile.TemporaryDirectory() as folder:
+            console = Console(folder)
+            handler = object.__new__(make_handler(console))
+            handler.server = SimpleNamespace(server_port=8787)
+            captured = []
+            handler.respond = lambda value, code=200, **kwargs: captured.append((code, value))
+            for path, expected in (("/api/missions", 403), ("/api/report", 400)):
+                handler.headers = {"Host": "127.0.0.1:8787", "Content-Length": "2"}
+                handler.path = path
+                handler.rfile = io.BytesIO(b"{}")
+                handler.do_POST()
+                self.assertEqual(captured[-1][0], expected, path)
+            self.assertIn("No mission is waiting", captured[-1][1]["error"])
+
     def test_http_rejects_cross_origin_and_serves_no_arbitrary_files(self):
         with tempfile.TemporaryDirectory() as folder:
             console = Console(folder)

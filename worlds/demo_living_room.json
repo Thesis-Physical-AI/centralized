@@ -1,0 +1,26 @@
+{
+  "id": "demo_living_room",
+  "name": "Living room",
+  "description": "Demo · PuppyPi in a one-room Isaac Sim scene",
+  "notes": "The toy is deliberately absent from the simulated scene, so searching for it tests recovery.",
+  "demo": true,
+  "sim": {"world": "one_room.json"},
+  "samples": [
+    "Find the apple in living_room.",
+    "Inspect the table in living_room.",
+    "Find the apple and toy in living_room, then inspect the table."
+  ],
+  "world": {
+    "entities": {
+      "living_room": {"kind": "room"},
+      "table": {"kind": "surface", "in": "living_room"},
+      "apple": {"kind": "object", "in": "table", "weight_kg": 0.15},
+      "crate": {"kind": "container", "in": "living_room"},
+      "toy": {"kind": "object", "in": "living_room"}
+    },
+    "open": [],
+    "robots": {
+      "puppypi_1": {"at": "living_room"}
+    }
+  }
+}

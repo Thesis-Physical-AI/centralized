@@ -12,8 +12,8 @@ The Gemini key stays in the existing `.env`; no key is sent to the browser.
 
 ## What runs automatically
 
-1. The original request is saved with a unique mission ID and the symbolic
-   one-room world. Gemini plans tasks; the existing interface and orchestrator
+1. The original request is saved with a unique mission ID and the selected
+   world (see *Worlds* below). Gemini plans tasks; the existing interface and orchestrator
    validate and produce dispatch JSON.
 2. With VLM selected, the dashboard connects to `127.0.0.1:8765`. If unavailable,
    it launches the existing SmolVLM-Instruct server with workstation_gpu_live and
@@ -34,12 +34,52 @@ results or run log when needed. Starting a mission can make up to three bounded
 Gemini calls (planning, orchestration and, on a halt, replanning). No automatic
 model retry/format repair was added.
 
+## Worlds and run modes
+
+The **World** card picks the environment the planner sees. Worlds are JSON files
+in `worlds/`:
+
+- `demo_living_room.json` is the original one-room PuppyPi demo. It is read-only
+  in the dashboard (**Duplicate** makes an editable copy) and is the only world
+  linked to an Isaac Sim scene (`"sim": {"world": "one_room.json"}` in
+  `decentralised/sim/worlds/`).
+- **New world** / **Edit** opens a form for entities (name, kind, located in or
+  door connections) and robots (fleet id, start location), plus a JSON tab for
+  extra fields (`weight_kg`, `open`, `passages`, …). Saving runs the same world
+  validation the planner uses (`validate_world_context`), so robots must exist in
+  `mission-orchestrator/robots.json`. A run keeps its own copy of the world, so
+  editing or deleting a world never changes past or running missions.
+
+The run mode below the mission chooses what happens after planning:
+
+| Mode | After the dispatch plan |
+|---|---|
+| Isaac Sim | Steps 2–5 above (only for worlds with a sim scene). |
+| External robot | Waits up to an hour for an execution report, then runs feedback and replanning. |
+| Plan only | Stops; status *Plan ready*. Nothing is dispatched. |
+
+For **External robot**, take the dispatch from the **Plan** dropdown, run it on the
+robot, then paste the report into the dashboard or POST it from a local script:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/report -H 'Content-Type: application/json' \
+  -d '{"job_id": "<run id>", "report": {"mission_id": "M-<run id>",
+       "execution": {"mission_id": "M-<run id>", "plan_revision": 0, "status": "HALTED",
+                     "steps": [{"mission_id": "M-<run id>", "plan_revision": 0, "step_id": "S1",
+                                "robot_id": "puppypi_1", "attempt": 1, "status": "SUCCEEDED",
+                                "reason_code": "", "observations": []}]}}}'
+```
+
+The report uses the same contract as `decentralised/run_prototype.py`'s
+`results.json`. `/api/report` is the only endpoint that accepts requests without
+a browser Origin (local scripts); a foreign Origin is still refused.
+
 ## Scope and controls
 
-- This version starts fresh one-room PuppyPi simulations. It uses the existing
-  example request's world and only changes its mission ID and natural-language
-  instruction. It does not control an already-running stage or real hardware.
-- The toy is deliberately absent from the scene. “Search living_room for the
+- Isaac Sim runs start a fresh simulation of the world's sim scene. The dashboard
+  does not control an already-running stage; real robots report back through
+  External robot mode.
+- In the demo, the toy is deliberately absent from the scene. “Search living_room for the
   toy” exercises the failure/feedback path. “Find the apple” is another starting
   point, but live VLM navigation can be unreliable; use the test perception mode
   to distinguish controller issues from interface issues.

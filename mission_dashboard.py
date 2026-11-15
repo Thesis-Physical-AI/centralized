@@ -9,17 +9,50 @@ from pathlib import Path
 import signal
 import subprocess
 from threading import Lock, Thread
+import re
 import time
 import urllib.request
 import uuid
 
+from structured_mission_interface import validate_world_context
+
 ROOT = Path(__file__).resolve().parent
 EDGE = ROOT.parent / "decentralised"
 VLM = "http://127.0.0.1:8765"
+WORLDS = ROOT / "worlds"
+FLEET = ROOT / "mission-orchestrator/robots.json"
+SIM_WORLDS = EDGE / "sim/worlds"
+DEMO_WORLD = "demo_living_room"
+# isaac_sim: launch the Isaac Sim prototype; plan_only: stop after dispatch;
+# external: wait for any robot/bridge to POST its execution report to /api/report.
+BACKENDS = ("isaac_sim", "plan_only", "external")
+WORLD_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+FINISHED = {"succeeded", "planned", "needs_attention", "error", "stopped"}
+REPORT_WAIT_S = 3600
 
 
 def read_json(path):
     return json.loads(Path(path).read_text())
+
+
+def write_json(path, value):
+    """Write via a temp file so readers never see a half-written document."""
+    path = Path(path)
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(value, indent=2))
+    temp.replace(path)
+
+
+def slug(text):
+    value = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:48]
+    return value if value and value[0].isalnum() else "world"
+
+
+def text_field(data, key, limit, required=False):
+    value = data.get(key, "")
+    if not isinstance(value, str) or len(value.strip()) > limit or (required and not value.strip()):
+        raise ValueError(f"'{key}' must be text of at most {limit} characters" + (" and not empty." if required else "."))
+    return value.strip()
 
 
 def vlm_health():
@@ -31,9 +64,11 @@ def vlm_health():
 
 
 class Console:
-    def __init__(self, output=None):
+    def __init__(self, output=None, worlds=None):
         self.output = Path(output or ROOT / "outputs/dashboard")
+        self.worlds = Path(worlds or WORLDS)
         self.lock = Lock()
+        self.world_lock = Lock()
         self.job = None
         self.cancel = False
         self.vlm_process = None
@@ -42,8 +77,7 @@ class Console:
         if saved:
             try:
                 previous = read_json(saved[-1])
-                if (previous.get("status") in {"succeeded", "needs_attention", "error", "stopped"}
-                        and previous.get("id") == saved[-1].parent.name):
+                if previous.get("status") in FINISHED and previous.get("id") == saved[-1].parent.name:
                     self.job = previous
             except (OSError, ValueError, AttributeError):
                 pass
@@ -71,11 +105,98 @@ class Console:
             snapshot = deepcopy(self.job)
         (self.output / snapshot["id"] / "state.json").write_text(json.dumps(snapshot, indent=2))
 
-    def submit(self, mission, perception):
+    # ---- worlds: the demo ships read-only; anything created in the dashboard sits next to it.
+
+    @staticmethod
+    def fleet():
+        return read_json(FLEET)
+
+    def describe(self, spec):
+        sim = spec.get("sim") or {}
+        name = sim.get("world") if isinstance(sim, dict) else None
+        has_sim = (isinstance(name, str) and Path(name).name == name and name.endswith(".json")
+                   and (SIM_WORLDS / name).is_file())
+        return {"id": spec["id"], "name": spec.get("name") or spec["id"], "description": spec.get("description", ""),
+                "notes": spec.get("notes", ""), "demo": bool(spec.get("demo")), "samples": spec.get("samples", []),
+                "world": spec["world"], "sim": sim if has_sim else None,
+                "backends": [b for b in BACKENDS if has_sim or b != "isaac_sim"]}
+
+    def list_worlds(self):
+        items = []
+        for path in sorted(self.worlds.glob("*.json")):
+            try:
+                spec = read_json(path)
+            except (OSError, ValueError):
+                continue
+            if isinstance(spec, dict) and spec.get("id") == path.stem and isinstance(spec.get("world"), dict):
+                items.append(self.describe(spec))
+        return sorted(items, key=lambda w: (not w["demo"], w["name"].lower()))
+
+    def get_world(self, world_id):
+        if not isinstance(world_id, str) or not WORLD_ID.match(world_id):
+            raise ValueError("Choose a world.")
+        try:
+            spec = read_json(self.worlds / f"{world_id}.json")
+        except (OSError, ValueError):
+            raise ValueError(f"World '{world_id}' was not found.") from None
+        if spec.get("id") != world_id or not isinstance(spec.get("world"), dict):
+            raise ValueError(f"World '{world_id}' is malformed.")
+        return self.describe(spec)
+
+    def save_world(self, data):
+        name = text_field(data, "name", 80, required=True)
+        spec = {"name": name, "description": text_field(data, "description", 200),
+                "notes": text_field(data, "notes", 1000)}
+        samples = data.get("samples", [])
+        if (not isinstance(samples, list) or len(samples) > 12
+                or not all(isinstance(s, str) and 0 < len(s.strip()) <= 5000 for s in samples)):
+            raise ValueError("Sample missions must be up to 12 non-empty lines.")
+        spec["samples"] = [s.strip() for s in samples]
+        world = data.get("world")
+        if not isinstance(world, dict):
+            raise ValueError("The world description must be a JSON object.")
+        result = validate_world_context(world, self.fleet())
+        if not result.valid:
+            raise ValueError("World is not valid: " + "; ".join(
+                f"{e.path.removeprefix('/world')}: {e.message}" for e in result.errors[:6]))
+        spec["world"] = world
+        with self.world_lock:
+            world_id = data.get("id")
+            if world_id:  # update an existing world
+                existing = self.get_world(world_id)
+                if existing["demo"]:
+                    raise ValueError("The demo world is read-only. Duplicate it to make changes.")
+                if existing["sim"]:
+                    spec["sim"] = existing["sim"]
+            else:
+                base = world_id = slug(name)
+                n = 2
+                while (self.worlds / f"{world_id}.json").exists():
+                    world_id, n = f"{base}_{n}", n + 1
+            spec = {"id": world_id, **spec}
+            self.worlds.mkdir(parents=True, exist_ok=True)
+            write_json(self.worlds / f"{world_id}.json", spec)
+        return self.describe(spec)
+
+    def delete_world(self, world_id):
+        with self.world_lock:
+            if self.get_world(world_id)["demo"]:
+                raise ValueError("The demo world cannot be deleted.")
+            (self.worlds / f"{world_id}.json").unlink()
+        return {"ok": True}
+
+    # ---- missions
+
+    def submit(self, mission, perception, world_id=DEMO_WORLD, backend="isaac_sim"):
         if not isinstance(mission, str) or not 1 <= len(mission.strip()) <= 5000:
             raise ValueError("Enter a mission between 1 and 5,000 characters.")
         if perception not in {"vlm", "ground_truth"}:
             raise ValueError("Choose VLM camera or ground-truth test perception.")
+        if backend not in BACKENDS:
+            raise ValueError("Choose Isaac Sim, plan only or external robot execution.")
+        world = self.get_world(world_id)
+        if backend not in world["backends"]:
+            raise ValueError(f"'{world['name']}' has no Isaac Sim scene. Choose plan only or external robot.")
         with self.lock:
             if self.job and self.job["status"] == "running":
                 raise ValueError("A mission is already running. Stop it before starting another.")
@@ -83,7 +204,9 @@ class Console:
             folder = self.output / identity
             folder.mkdir(parents=True)
             self.cancel = False
+            # The world is snapshotted, so editing it mid-run never changes what this run planned against.
             self.job = {"id": identity, "mission": mission.strip(), "perception": perception,
+                        "backend": backend, "world": world,
                         "status": "running", "stage": "planning", "completed": [], "results": {},
                         "message": "Gemini is decomposing and allocating the mission.",
                         "started_at": datetime.now(timezone.utc).isoformat()}
@@ -95,6 +218,32 @@ class Console:
         with self.lock:
             self.cancel = True
         return {"ok": True}
+
+    def receive_report(self, job_id, report):
+        """Accept an execution report from any robot or bridge for the run waiting on one."""
+        with self.lock:
+            job = self.job
+            waiting = (job and job["id"] == job_id and job["status"] == "running"
+                       and job.get("backend") == "external" and job.get("stage") == "execution")
+        if not waiting:
+            raise ValueError("No mission is waiting for an execution report.")
+        if not isinstance(report, dict) or not isinstance(report.get("execution"), dict) \
+                or not isinstance(report["execution"].get("steps"), list):
+            raise ValueError("The report must be an object with execution.steps (see DASHBOARD.md).")
+        if report.get("mission_id") != "M-" + job_id:
+            raise ValueError(f"The report's mission_id must be 'M-{job_id}'.")
+        target = self.output / job_id / "simulation"
+        target.mkdir(exist_ok=True)
+        write_json(target / "results.json", report)
+        return {"ok": True}
+
+    def wait_for_report(self, report):
+        deadline = time.monotonic() + REPORT_WAIT_S
+        while not report.exists():
+            self.check_cancel()
+            if time.monotonic() > deadline:
+                raise TimeoutError("No execution report arrived within an hour.")
+            time.sleep(0.5)
 
     def check_cancel(self):
         with self.lock:
@@ -147,10 +296,10 @@ class Console:
     def run(self, identity):
         folder = self.output / identity
         python = ROOT / ".venv/bin/python"
-        request = read_json(ROOT / "reasoning-layer/examples/replanning_one_room_request.json")
         with self.lock:
             mission, perception = self.job["mission"], self.job["perception"]
-        request.update(mission_id="M-" + identity, natural_language=mission)
+            backend, world = self.job["backend"], deepcopy(self.job["world"])
+        request = {"mission_id": "M-" + identity, "natural_language": mission, "world": world["world"]}
         (folder / "request.json").write_text(json.dumps(request, indent=2))
         completed, results = [], {}
 
@@ -175,27 +324,36 @@ class Console:
                 details = errors.read_text(errors="replace") if errors.exists() else ""
                 reason = next((line.removeprefix("ERROR: ") for line in details.splitlines()
                                if line.startswith("ERROR:")), "Review the planner response or run log.")
-                self.update(status=status, results=results, message="No simulation was launched. " + reason)
+                self.update(status=status, results=results, message="No robot was dispatched. " + reason)
                 return
             if code:
-                raise RuntimeError("Planning failed; no simulation was launched.")
+                raise RuntimeError("Planning failed; no robot was dispatched.")
             results["dispatch"] = read_json(output("dispatch"))
             completed.append("planning")
-            phase("perception", "Connecting to the VLM camera server." if perception == "vlm" else "Using ground-truth test perception.")
-            if perception == "vlm":
-                self.ensure_vlm(folder)
-            completed.append("perception")
-            phase("execution", "PuppyPi is executing the validated plan in Isaac Sim.")
-            simulator = ROOT.parent / "isaacsim/_build/linux-x86_64/release/python.sh"
-            command = [simulator, EDGE / "run_prototype.py", "--dispatch", output("dispatch"),
-                       "--plan-revision", "0", "--perceiver", perception, "--out", folder / "simulation"]
-            if perception == "vlm":
-                command.extend(["--approach", "live", "--vlm-url", VLM])
-            # A halted mission can exit nonzero while still producing valid feedback.
-            self.command(command, EDGE, folder, "simulation", 900)
+            if backend == "plan_only":
+                self.update(status="planned", results=results, completed=completed,
+                            message="Plan ready. Plan-only mode: no robot was dispatched.")
+                return
             report = folder / "simulation/results.json"
-            if not report.exists():
-                raise RuntimeError("Simulator ended without an execution report. See the run log.")
+            if backend == "isaac_sim":
+                phase("perception", "Connecting to the VLM camera server." if perception == "vlm" else "Using ground-truth test perception.")
+                if perception == "vlm":
+                    self.ensure_vlm(folder)
+                completed.append("perception")
+                phase("execution", "The robot is executing the validated plan in Isaac Sim.")
+                simulator = ROOT.parent / "isaacsim/_build/linux-x86_64/release/python.sh"
+                command = [simulator, EDGE / "run_prototype.py", "--dispatch", output("dispatch"),
+                           "--world", SIM_WORLDS / world["sim"]["world"],
+                           "--plan-revision", "0", "--perceiver", perception, "--out", folder / "simulation"]
+                if perception == "vlm":
+                    command.extend(["--approach", "live", "--vlm-url", VLM])
+                # A halted mission can exit nonzero while still producing valid feedback.
+                self.command(command, EDGE, folder, "simulation", 900)
+                if not report.exists():
+                    raise RuntimeError("Simulator ended without an execution report. See the run log.")
+            else:
+                phase("execution", "Plan dispatched. Waiting for the robot to send its execution report.")
+                self.wait_for_report(report)
             results["execution"] = read_json(report)
             completed.append("execution")
             phase("feedback", "Validating results and updating the central world snapshot.")
@@ -251,28 +409,46 @@ def make_handler(console):
                 self.respond({"job": console.state()})
             elif self.path == "/api/vlm":
                 self.respond(vlm_health())
+            elif self.path == "/api/worlds":
+                fleet = console.fleet()
+                self.respond({"worlds": console.list_worlds(), "default": DEMO_WORLD,
+                              "robots": [{"id": r["id"], "role": r.get("role", "")} for r in fleet["robots"]]})
             else:
                 self.respond({"error": "Not found"}, 404)
 
+        # Request size limits per endpoint; execution reports carry perception traces, so allow more.
+        LIMITS = {"/api/missions": 30000, "/api/stop": 30000, "/api/worlds": 200000,
+                  "/api/worlds/delete": 30000, "/api/report": 5_000_000}
+
         def do_POST(self):
-            origin = self.headers.get("Origin")
-            if not self.trusted_host() or origin != "http://" + self.headers.get("Host", ""):
+            origin, local = self.headers.get("Origin"), "http://" + self.headers.get("Host", "")
+            # Browsers always send Origin on POST, so a missing one is a local script (robot bridge, curl);
+            # only /api/report accepts that. A foreign Origin is always refused.
+            if not self.trusted_host() or not (origin == local or (origin is None and self.path == "/api/report")):
                 self.respond({"error": "Use the local dashboard to submit missions"}, 403)
                 return
-            if self.path not in {"/api/missions", "/api/stop"}:
+            if self.path not in self.LIMITS:
                 self.respond({"error": "Not found"}, 404)
                 return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= 30000:
+                if not 0 < size <= self.LIMITS[self.path]:
                     raise ValueError("Invalid request size")
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data, dict):
                     raise ValueError("Request must be an object")
                 if self.path == "/api/stop":
                     self.respond(console.stop())
+                elif self.path == "/api/worlds":
+                    self.respond({"world": console.save_world(data)})
+                elif self.path == "/api/worlds/delete":
+                    self.respond(console.delete_world(data.get("id")))
+                elif self.path == "/api/report":
+                    self.respond(console.receive_report(data.get("job_id"), data.get("report")))
                 else:
-                    self.respond({"id": console.submit(data.get("mission"), data.get("perception", "vlm"))}, 202)
+                    self.respond({"id": console.submit(data.get("mission"), data.get("perception", "vlm"),
+                                                       data.get("world", DEMO_WORLD),
+                                                       data.get("backend", "isaac_sim"))}, 202)
             except (ValueError, TypeError) as error:
                 self.respond({"error": str(error)}, 400)
 
