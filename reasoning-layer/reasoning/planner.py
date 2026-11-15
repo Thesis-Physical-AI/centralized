@@ -28,13 +28,16 @@ class PlanningOutcome:
     attempts: int
 
 
-def build_prompt(request: MissionRequest, fleet: dict[str, Any]) -> str:
-    return json.dumps({
+def build_prompt(request: MissionRequest, fleet: dict[str, Any], *, execution_context=None) -> str:
+    context = {
         "mission_id": request.mission_id,
         "natural_language": request.natural_language,
         "world": request.world,
         "fleet": active_fleet(fleet, request.world),
-    }, ensure_ascii=False, allow_nan=False)
+    }
+    if execution_context is not None:
+        context["execution_feedback"] = deepcopy(execution_context)
+    return json.dumps(context, ensure_ascii=False, allow_nan=False)
 
 
 class MissionPlanner:
@@ -45,8 +48,30 @@ class MissionPlanner:
         self.max_attempts = max_attempts
 
     def plan(self, request: MissionRequest, fleet: dict[str, Any]) -> PlanningOutcome:
+        return self._plan(request, fleet)
+
+    def replan(self, request: MissionRequest, fleet: dict[str, Any], *, dispatch, report,
+               plan_revision: int) -> dict:
+        from .replanning import prepare_replanning
+
+        updated, context = prepare_replanning(request, fleet, dispatch=dispatch, report=report,
+                                             plan_revision=plan_revision)
+        outcome = self._plan(updated, fleet, execution_context=context)
+        warnings = []
+        if outcome.handoff is not None:
+            from .interface import validate_handoff
+
+            validate_handoff(outcome.handoff, updated, fleet, warnings=warnings)
+        return {"mission_id": request.mission_id, "source_plan_revision": plan_revision,
+                "proposed_plan_revision": plan_revision + 1, "status": outcome.decision.status,
+                "requires_review": True, "sends_robot_commands": False,
+                "execution_feedback": context, "interface_warnings": warnings,
+                "decision": outcome.decision.model_dump(),
+                "handoff": outcome.handoff}
+
+    def _plan(self, request: MissionRequest, fleet: dict[str, Any], *, execution_context=None) -> PlanningOutcome:
         validate_context(request, fleet)
-        prompt = build_prompt(request, fleet)
+        prompt = build_prompt(request, fleet, execution_context=execution_context)
         schema = generation_schema()
         for attempt in range(1, self.max_attempts + 1):
             response = self.provider.generate(system=SYSTEM_PROMPT, prompt=prompt, schema=schema)
@@ -54,6 +79,10 @@ class MissionPlanner:
                 if not isinstance(response, str) or len(response) > 100000:
                     raise ContractError("model response must be text under 100000 characters")
                 decision = ModelDecision.model_validate(parse_json(response))
+                if execution_context is not None:
+                    prefix = f"R{execution_context['proposed_plan_revision']}_"
+                    if any(not task.task_id.startswith(prefix) for task in decision.tasks):
+                        raise ContractError(f"Replanned task IDs must start with {prefix}")
                 # Reject non-JSON values inside free-form constraints as well.
                 json.dumps(decision.model_dump(), allow_nan=False)
             except (ValidationError, ValueError, TypeError) as error:
@@ -63,11 +92,11 @@ class MissionPlanner:
                     details = [{"field": list(item["loc"]), "error": item["msg"]}
                                for item in error.errors(include_input=False, include_url=False)]
                 else:
-                    details = [{"error": "Invalid JSON, task IDs, or task dependencies."}]
+                    details = [{"error": "Invalid JSON, task IDs, revision task prefix, or task dependencies."}]
                 # A fresh request carries the original context and validation feedback.
                 # Do not treat model output as system instructions or execute it.
                 prompt = json.dumps({
-                    "original_request": json.loads(build_prompt(request, fleet)),
+                    "original_request": json.loads(build_prompt(request, fleet, execution_context=execution_context)),
                     "repair": {
                         "errors": details,
                         "previous_response": response[:100000] if isinstance(response, str) else "",

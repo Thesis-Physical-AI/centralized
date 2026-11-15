@@ -1,5 +1,8 @@
 # Centralized Coordination Layer
 
+For a local natural-language interface with automatic execution/feedback and the
+VLM camera view, see the [mission dashboard](DASHBOARD.md).
+
 The centralized layer serves as the high-level decision-making and coordination hub of the multi-robot system. It translates natural-language mission descriptions into structured objectives, using an LLM-powered **Mission Planner** to decompose complex tasks into executable subtasks. The **Mission Interface** provides a standardized communication bridge between the centralized intelligence and the decentralized robot network, while the **Mission Orchestrator** manages task allocation, execution sequencing, inter-robot dependencies, and overall mission progress. By coordinating these components, the centralized layer maintains a global view of the mission and enables collaborative task execution across heterogeneous robots.
 
 The centralized layer communicates with the **decentralized layer**, where each robot operates as an independent node equipped with its own perception, planning, and control capabilities. VLA (Vision-Language-Action) models can translate high-level instructions and visual observations into robot-specific actions, allowing individual robots to execute assigned tasks while sharing relevant status updates with the broader system. This hierarchical architecture combines LLM-based reasoning and global coordination with decentralized autonomy, enabling robots to work together toward shared mission objectives.
@@ -26,6 +29,9 @@ through all connected layers, or use `reasoning-layer/run_mission.py` for live G
 Saved robot execution reports can now be ingested into a validated feedback
 snapshot with conservative world updates; see [execution feedback](FEEDBACK.md).
 This separate offline entry point does not yet perform automatic replanning.
+The [reasoning-only replanning entry point](FEEDBACK.md#feedback-into-the-reasoning-layer)
+now forwards validated execution history to the planner and produces a review
+proposal; it does not activate or execute a replacement plan.
 
 See [the architecture review](ARCHITECTURE_REVIEW.md) for layer responsibilities,
 validation fixes, test evidence and the remaining execution/feedback work.

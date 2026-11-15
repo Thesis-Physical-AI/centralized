@@ -1,0 +1,34 @@
+{
+  "mission_id": "M-DISPATCH-SIM-001",
+  "natural_language": "Find the apple and toy in living_room, then inspect the table.",
+  "world": {
+    "entities": {
+      "living_room": {
+        "kind": "room"
+      },
+      "table": {
+        "kind": "surface",
+        "in": "living_room"
+      },
+      "apple": {
+        "kind": "object",
+        "in": "table",
+        "weight_kg": 0.15
+      },
+      "crate": {
+        "kind": "container",
+        "in": "living_room"
+      },
+      "toy": {
+        "kind": "object",
+        "in": "living_room"
+      }
+    },
+    "open": [],
+    "robots": {
+      "puppypi_1": {
+        "at": "living_room"
+      }
+    }
+  }
+}
