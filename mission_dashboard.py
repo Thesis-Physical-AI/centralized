@@ -14,14 +14,15 @@ import time
 import urllib.request
 import uuid
 
+from sim_scene import NoSimRobot, SceneError, generate_scene
 from structured_mission_interface import validate_world_context
+from mission_lifecycle import MissionLifecycle, SessionClient
 
 ROOT = Path(__file__).resolve().parent
 EDGE = ROOT.parent / "decentralised"
 VLM = "http://127.0.0.1:8765"
 WORLDS = ROOT / "worlds"
 FLEET = ROOT / "mission-orchestrator/robots.json"
-SIM_WORLDS = EDGE / "sim/worlds"
 DEMO_WORLD = "demo_living_room"
 # isaac_sim: launch the Isaac Sim prototype; plan_only: stop after dispatch;
 # external: wait for any robot/bridge to POST its execution report to /api/report.
@@ -73,11 +74,14 @@ class Console:
         self.cancel = False
         self.vlm_process = None
         self.worker = None
+        self.recovery_action = None
         saved = sorted(self.output.glob("*/state.json"))
         if saved:
             try:
                 previous = read_json(saved[-1])
                 if previous.get("status") in FINISHED and previous.get("id") == saved[-1].parent.name:
+                    if previous.get("message") == "Mission stopped. No replacement plan was activated.":
+                        previous["message"] = "Mission stopped. No further plan revisions will be activated."
                     self.job = previous
             except (OSError, ValueError, AttributeError):
                 pass
@@ -103,7 +107,7 @@ class Console:
         with self.lock:
             self.job.update(values)
             snapshot = deepcopy(self.job)
-        (self.output / snapshot["id"] / "state.json").write_text(json.dumps(snapshot, indent=2))
+        write_json(self.output / snapshot["id"] / "state.json", snapshot)
 
     # ---- worlds: the demo ships read-only; anything created in the dashboard sits next to it.
 
@@ -112,14 +116,16 @@ class Console:
         return read_json(FLEET)
 
     def describe(self, spec):
-        sim = spec.get("sim") or {}
-        name = sim.get("world") if isinstance(sim, dict) else None
-        has_sim = (isinstance(name, str) and Path(name).name == name and name.endswith(".json")
-                   and (SIM_WORLDS / name).is_file())
+        # The Isaac Sim scene is generated from the world every time, never stored.
+        overrides = spec.get("sim") or {}
+        try:
+            scene, issue = generate_scene(spec["world"], overrides), ""
+        except (SceneError, KeyError, TypeError, AttributeError) as error:
+            scene, issue = None, str(error)
         return {"id": spec["id"], "name": spec.get("name") or spec["id"], "description": spec.get("description", ""),
                 "notes": spec.get("notes", ""), "demo": bool(spec.get("demo")), "samples": spec.get("samples", []),
-                "world": spec["world"], "sim": sim if has_sim else None,
-                "backends": [b for b in BACKENDS if has_sim or b != "isaac_sim"]}
+                "world": spec["world"], "sim": overrides, "sim_scene": scene, "sim_issue": issue,
+                "backends": [b for b in BACKENDS if scene or b != "isaac_sim"]}
 
     def list_worlds(self):
         items = []
@@ -160,13 +166,25 @@ class Console:
             raise ValueError("World is not valid: " + "; ".join(
                 f"{e.path.removeprefix('/world')}: {e.message}" for e in result.errors[:6]))
         spec["world"] = world
+        if "sim" in data:  # layout overrides, e.g. carried over when duplicating the demo
+            overrides = data["sim"] or {}
+            if isinstance(overrides, dict) and isinstance(overrides.get("entities"), dict):
+                overrides = {**overrides, "entities": {k: v for k, v in overrides["entities"].items()
+                                                       if k in world["entities"]}}
+            try:
+                generate_scene(world, overrides)
+            except NoSimRobot:
+                pass
+            except (SceneError, TypeError, AttributeError) as error:
+                raise ValueError(f"Sim layout is not valid: {error}") from None
+            spec["sim"] = overrides
         with self.world_lock:
             world_id = data.get("id")
             if world_id:  # update an existing world
                 existing = self.get_world(world_id)
                 if existing["demo"]:
                     raise ValueError("The demo world is read-only. Duplicate it to make changes.")
-                if existing["sim"]:
+                if "sim" not in spec and existing["sim"]:
                     spec["sim"] = existing["sim"]
             else:
                 base = world_id = slug(name)
@@ -187,16 +205,21 @@ class Console:
 
     # ---- missions
 
-    def submit(self, mission, perception, world_id=DEMO_WORLD, backend="isaac_sim"):
+    def submit(self, mission, perception, world_id=DEMO_WORLD, backend="isaac_sim", *, recovery=False, automatic_recovery=True):
         if not isinstance(mission, str) or not 1 <= len(mission.strip()) <= 5000:
             raise ValueError("Enter a mission between 1 and 5,000 characters.")
         if perception not in {"vlm", "ground_truth"}:
             raise ValueError("Choose VLM camera or ground-truth test perception.")
         if backend not in BACKENDS:
             raise ValueError("Choose Isaac Sim, plan only or external robot execution.")
+        if type(recovery) is not bool or type(automatic_recovery) is not bool:
+            raise ValueError("Recovery settings must be booleans")
+        if recovery and backend != "isaac_sim":
+            raise ValueError("Revision activation is currently supported by the Isaac Sim session backend only")
         world = self.get_world(world_id)
         if backend not in world["backends"]:
-            raise ValueError(f"'{world['name']}' has no Isaac Sim scene. Choose plan only or external robot.")
+            raise ValueError(f"'{world['name']}' cannot run in Isaac Sim: {world['sim_issue']}. "
+                             "Choose plan only or external robot.")
         with self.lock:
             if self.job and self.job["status"] == "running":
                 raise ValueError("A mission is already running. Stop it before starting another.")
@@ -204,9 +227,11 @@ class Console:
             folder = self.output / identity
             folder.mkdir(parents=True)
             self.cancel = False
+            self.recovery_action = None
             # The world is snapshotted, so editing it mid-run never changes what this run planned against.
             self.job = {"id": identity, "mission": mission.strip(), "perception": perception,
                         "backend": backend, "world": world,
+                        "recovery_enabled": recovery, "automatic_recovery": automatic_recovery, "active_revision": 0,
                         "status": "running", "stage": "planning", "completed": [], "results": {},
                         "message": "Gemini is decomposing and allocating the mission.",
                         "started_at": datetime.now(timezone.utc).isoformat()}
@@ -218,6 +243,195 @@ class Console:
         with self.lock:
             self.cancel = True
         return {"ok": True}
+
+    def recover(self, data):
+        """Queue operator input for the current paused revision, never execute in HTTP threads."""
+        with self.lock:
+            job = self.job
+            if (not job or job["id"] != data.get("job_id") or job["status"] != "running"
+                    or not job.get("recovery_enabled") or job["stage"] not in {"clarification", "review"}
+                    or type(data.get("source_revision")) is not int
+                    or data["source_revision"] != job["active_revision"]
+                    or data.get("proposal_id") != job.get("recovery", {}).get("proposal_id")):
+                raise ValueError("This mission/revision is not waiting for recovery input")
+            if self.recovery_action is not None:
+                raise ValueError("Recovery input is already being processed")
+            action = data.get("action")
+            if action == "clarify":
+                text = text_field(data, "text", 5000, required=True)
+                self.recovery_action = {"action": action, "text": text}
+            elif action == "activate" and job["stage"] == "review":
+                if type(data.get("acknowledge_review", False)) is not bool:
+                    raise ValueError("Review confirmation must be a boolean")
+                self.recovery_action = {"action": action, "acknowledge_review": data.get("acknowledge_review", False)}
+            else:
+                raise ValueError("Choose clarification or activation of the current proposal")
+        return {"ok": True}
+
+    def wait_recovery_action(self, client):
+        deadline = time.monotonic() + 3500
+        while time.monotonic() < deadline:
+            self.check_cancel()
+            if not client.alive():
+                raise RuntimeError("The paused simulator session ended. It cannot be resumed by resetting the scene.")
+            with self.lock:
+                action, self.recovery_action = self.recovery_action, None
+            if action:
+                return action
+            time.sleep(.2)
+        raise TimeoutError("Recovery input timed out; the session was stopped")
+
+    def start_simulator(self, command, folder):
+        with (folder / "simulation.log").open("w") as stdout, (folder / "simulation-errors.log").open("w") as stderr:
+            return subprocess.Popen([str(a) for a in command], cwd=EDGE, stdout=stdout, stderr=stderr,
+                                    start_new_session=True)
+
+    @staticmethod
+    def terminate_process(process):
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+
+    def run_persistent(self, command, folder, request, scene, results, completed):
+        """One physical session, bounded revisions, and explicit clarification waits."""
+        candidate = read_json(folder / "candidate.json") if (folder / "candidate.json").exists() else {}
+        life = MissionLifecycle(folder, request, results["dispatch"], self.fleet(), objectives=candidate.get("tasks"),
+                                execution_mode="live" if self.job["perception"] == "vlm" else "map")
+        command = [*command, "--session-dir", folder / "session"]
+        process = self.start_simulator(command, folder)
+        client = SessionClient(folder / "session", check_cancel=self.check_cancel, alive=lambda: process.poll() is None)
+        proposal_index = 0
+
+        def publish(stage, message, **extra):
+            self.check_cancel()
+            results["lifecycle"] = deepcopy(life.data)
+            self.update(stage=stage, message=message, completed=completed[:], results=deepcopy(results),
+                        active_revision=life.data["active_revision"], **extra)
+
+        def close_session():
+            state = client.checkpoint()
+            if state["phase"] == "IDLE":
+                client.send({"command_id": uuid.uuid4().hex, "action": "close", "mission_id": state["mission_id"],
+                             "session_id": state["session_id"], "expected_revision": state["active_revision"],
+                             "quiescence_token": state["quiescence_token"]})
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    pass
+
+        try:
+            while True:
+                revision = life.data["active_revision"]
+                report = client.wait(f"reports/{revision}.json")
+                results["execution"] = report
+                if "execution" not in completed:
+                    completed.append("execution")
+                publish("feedback", f"Ingesting revision {revision} feedback from the same simulator session.")
+                feedback = life.record_report(report)
+                results["feedback"] = feedback
+                write_json(folder / f"feedback-r{revision}.json", feedback)
+                if "feedback" not in completed:
+                    completed.append("feedback")
+                if feedback["status"] == "SUCCEEDED":
+                    close_session()
+                    publish("feedback", "All remaining objectives completed in the same simulator session.", recovery=None)
+                    return "succeeded", "Mission completed; revision history and feedback are saved."
+                if feedback["status"] != "HALTED":
+                    close_session()
+                    return "needs_attention", "The session is pending on unsupported peers/dependencies. No work was discarded."
+                reconciliation_error = ""
+                try:
+                    life.reconcile_pose(scene)
+                except ValueError as error:
+                    reconciliation_error = str(error)
+                if revision >= life.data["max_revisions"]:
+                    close_session()
+                    return "needs_attention", "Recovery revision limit reached. Review the mission before any further execution."
+                while True:
+                    proposal_index += 1
+                    artifact = folder / "revisions" / f"{revision}-proposal-{proposal_index}"
+                    artifact.mkdir(parents=True)
+                    write_json(artifact / "request.json", life.current["request"])
+                    write_json(artifact / "dispatch.json", life.current["dispatch"])
+                    write_json(artifact / "report.json", life.current["report"])
+                    write_json(artifact / "history.json", life.history())
+                    text = "\n".join(item["text"] for item in life.data["clarifications"])
+                    write_json(artifact / "clarification.json", {"text": text[-5000:]})
+                    publish("replanning", f"Planning recovery for revision {revision + 1}; the robot is paused.", recovery=None)
+                    code = self.command([ROOT / ".venv/bin/python", ROOT / "reasoning-layer/replan_mission.py",
+                        "--input", artifact / "request.json", "--dispatch", artifact / "dispatch.json",
+                        "--report", artifact / "report.json", "--history", artifact / "history.json",
+                        "--clarification", artifact / "clarification.json", "--plan-revision", str(revision),
+                        "--output", artifact / "proposal.json", "--dispatch-output", artifact / "replacement.json"],
+                        ROOT, folder, f"replanning-r{revision}-{proposal_index}", 130)
+                    if code not in {0, 3} or not (artifact / "proposal.json").exists():
+                        raise RuntimeError("Recovery generation failed; the paused session was stopped. See the run log.")
+                    proposal = read_json(artifact / "proposal.json")
+                    results["replan"] = proposal
+                    if "replanning" not in completed:
+                        completed.append("replanning")
+                    reasons = []
+                    life.data["pending"] = None
+                    life.data["status"] = "WAITING_REPLAN"
+                    life.save()
+                    if proposal["status"] == "ready" and (artifact / "replacement.json").exists():
+                        try:
+                            reasons = life.offer(proposal, read_json(artifact / "replacement.json"))
+                        except ValueError as error:
+                            reasons = [str(error)]
+                    else:
+                        reasons = ["Clarification or a valid orchestrated replacement is required."]
+                        if proposal.get("orchestration"):
+                            reasons.extend(proposal["orchestration"].get("errors", []))
+                            reasons.extend(proposal["orchestration"].get("warnings", []))
+                    if reconciliation_error:
+                        reasons.append(reconciliation_error)
+                    life.data["recovery_checks"] = reasons
+                    life.save()
+                    with self.lock:
+                        automatic = self.job["automatic_recovery"]
+                    action = {"action": "activate", "acknowledge_review": False} if automatic and not reasons else None
+                    while action is None:
+                        ready = life.data["pending"] is not None
+                        publish("review" if ready else "clarification",
+                                "Robot paused. Review recovery gates or provide more information.",
+                                recovery={"revision": revision, "can_activate": ready and not reconciliation_error
+                                          and not life.activation_reasons(acknowledge_review=True),
+                                          "proposal_id": artifact.name,
+                                          "reasons": reasons, "requires_answer": not ready})
+                        action = self.wait_recovery_action(client)
+                        if action["action"] == "clarify":
+                            life.add_clarification(action["text"])
+                            break
+                        blocked = life.activation_reasons(acknowledge_review=action["acknowledge_review"])
+                        if blocked or reconciliation_error:
+                            reasons = blocked + ([reconciliation_error] if reconciliation_error else [])
+                            action = None
+                    if action["action"] == "clarify":
+                        continue
+                    publish("activation", "Confirming the old revision is idle before activating the replacement.", recovery=None)
+                    state = client.checkpoint()
+                    pause = {"command_id": uuid.uuid4().hex, "action": "pause", "mission_id": state["mission_id"],
+                             "session_id": state["session_id"], "expected_revision": revision,
+                             "quiescence_token": state["quiescence_token"]}
+                    pause_ack = client.send(pause)
+                    write_json(artifact / "pause-ack.json", pause_ack)
+                    activation = life.begin_activation(client.checkpoint(), pause_ack=pause_ack,
+                                                       acknowledge_review=action["acknowledge_review"])
+                    ack = client.send(activation)
+                    life.commit_activation(ack)
+                    results["dispatch"] = deepcopy(life.current["dispatch"])
+                    results.pop("execution", None)
+                    results.pop("feedback", None)
+                    completed[:] = ["planning", "perception"]
+                    publish("execution", f"Revision {life.data['active_revision']} activated; continuing without resetting the scene.")
+                    break
+        finally:
+            self.terminate_process(process)
 
     def receive_report(self, job_id, report):
         """Accept an execution report from any robot or bridge for the run waiting on one."""
@@ -249,7 +463,7 @@ class Console:
         with self.lock:
             canceled = self.cancel
         if canceled:
-            raise InterruptedError("Mission stopped. No replacement plan was activated.")
+            raise InterruptedError("Mission stopped. No further plan revisions will be activated.")
 
     def command(self, args, cwd, folder, name, timeout):
         self.check_cancel()
@@ -340,13 +554,19 @@ class Console:
                 if perception == "vlm":
                     self.ensure_vlm(folder)
                 completed.append("perception")
+                # Generate the sim scene from the run's world snapshot; the simulator reads only this file.
+                write_json(folder / "sim_world.json", generate_scene(world["world"], world["sim"]))
                 phase("execution", "The robot is executing the validated plan in Isaac Sim.")
                 simulator = ROOT.parent / "isaacsim/_build/linux-x86_64/release/python.sh"
                 command = [simulator, EDGE / "run_prototype.py", "--dispatch", output("dispatch"),
-                           "--world", SIM_WORLDS / world["sim"]["world"],
+                           "--world", folder / "sim_world.json",
                            "--plan-revision", "0", "--perceiver", perception, "--out", folder / "simulation"]
                 if perception == "vlm":
                     command.extend(["--approach", "live", "--vlm-url", VLM])
+                if self.job.get("recovery_enabled"):
+                    status, message = self.run_persistent(command, folder, request, read_json(folder / "sim_world.json"), results, completed)
+                    self.update(status=status, message=message, results=results, completed=completed, recovery=None)
+                    return
                 # A halted mission can exit nonzero while still producing valid feedback.
                 self.command(command, EDGE, folder, "simulation", 900)
                 if not report.exists():
@@ -418,7 +638,7 @@ def make_handler(console):
 
         # Request size limits per endpoint; execution reports carry perception traces, so allow more.
         LIMITS = {"/api/missions": 30000, "/api/stop": 30000, "/api/worlds": 200000,
-                  "/api/worlds/delete": 30000, "/api/report": 5_000_000}
+                  "/api/worlds/delete": 30000, "/api/report": 5_000_000, "/api/recovery": 30000}
 
         def do_POST(self):
             origin, local = self.headers.get("Origin"), "http://" + self.headers.get("Host", "")
@@ -445,10 +665,14 @@ def make_handler(console):
                     self.respond(console.delete_world(data.get("id")))
                 elif self.path == "/api/report":
                     self.respond(console.receive_report(data.get("job_id"), data.get("report")))
+                elif self.path == "/api/recovery":
+                    self.respond(console.recover(data))
                 else:
                     self.respond({"id": console.submit(data.get("mission"), data.get("perception", "vlm"),
                                                        data.get("world", DEMO_WORLD),
-                                                       data.get("backend", "isaac_sim"))}, 202)
+                                                       data.get("backend", "isaac_sim"),
+                                                       recovery=data.get("recovery", False),
+                                                       automatic_recovery=data.get("automatic_recovery", True))}, 202)
             except (ValueError, TypeError) as error:
                 self.respond({"error": str(error)}, 400)
 

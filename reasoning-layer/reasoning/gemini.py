@@ -5,7 +5,7 @@ from typing import Any
 
 from .planner import GenerationError
 
-DEFAULT_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_MODEL = "gemini-4-hydrogen"
 
 
 class GeminiProvider:

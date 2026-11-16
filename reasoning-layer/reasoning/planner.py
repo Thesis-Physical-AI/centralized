@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from .contracts import ContractError, MissionRequest, ModelDecision, active_fleet, generation_schema, parse_json, validate_context
+from .contracts import ContractError, MissionRequest, ModelDecision, ReplanDecision, active_fleet, generation_schema, parse_json, validate_context
 
 SYSTEM_PROMPT = Path(__file__).with_name("system_prompt.txt").read_text(encoding="utf-8")
 
@@ -51,11 +51,11 @@ class MissionPlanner:
         return self._plan(request, fleet)
 
     def replan(self, request: MissionRequest, fleet: dict[str, Any], *, dispatch, report,
-               plan_revision: int) -> dict:
+               plan_revision: int, history=None, clarification="") -> dict:
         from .replanning import prepare_replanning
 
         updated, context = prepare_replanning(request, fleet, dispatch=dispatch, report=report,
-                                             plan_revision=plan_revision)
+                                             plan_revision=plan_revision, history=history, clarification=clarification)
         outcome = self._plan(updated, fleet, execution_context=context)
         warnings = []
         if outcome.handoff is not None:
@@ -66,19 +66,21 @@ class MissionPlanner:
                 "proposed_plan_revision": plan_revision + 1, "status": outcome.decision.status,
                 "requires_review": True, "sends_robot_commands": False,
                 "execution_feedback": context, "interface_warnings": warnings,
+                "objective_coverage": getattr(outcome.decision, "objective_coverage", {}),
                 "decision": outcome.decision.model_dump(),
                 "handoff": outcome.handoff}
 
     def _plan(self, request: MissionRequest, fleet: dict[str, Any], *, execution_context=None) -> PlanningOutcome:
         validate_context(request, fleet)
         prompt = build_prompt(request, fleet, execution_context=execution_context)
-        schema = generation_schema()
+        schema = generation_schema(replanning=execution_context is not None)
         for attempt in range(1, self.max_attempts + 1):
             response = self.provider.generate(system=SYSTEM_PROMPT, prompt=prompt, schema=schema)
             try:
                 if not isinstance(response, str) or len(response) > 100000:
                     raise ContractError("model response must be text under 100000 characters")
-                decision = ModelDecision.model_validate(parse_json(response))
+                model = ReplanDecision if execution_context is not None else ModelDecision
+                decision = model.model_validate(parse_json(response))
                 if execution_context is not None:
                     prefix = f"R{execution_context['proposed_plan_revision']}_"
                     if any(not task.task_id.startswith(prefix) for task in decision.tasks):

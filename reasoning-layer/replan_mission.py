@@ -1,4 +1,4 @@
-"""Run the reasoning-only replanning CLI from the repository root."""
+"""Run replanning and optional orchestration from the repository root."""
 from pathlib import Path
 import sys
 

@@ -1,5 +1,9 @@
 # Execution feedback snapshot
 
+For active revision execution, see [persistent recovery](RECOVERY.md). The saved
+feedback command below remains non-actuating; the lifecycle manager now consumes
+its validated snapshots and historical reports before activating replacements.
+
 The central layer can now ingest a complete saved executor report, validate its
 correlation with the original dispatch, and emit a detached feedback snapshot.
 This is the stopping point before feedback-driven replanning: it does not call

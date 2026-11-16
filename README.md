@@ -32,6 +32,9 @@ This separate offline entry point does not yet perform automatic replanning.
 The [reasoning-only replanning entry point](FEEDBACK.md#feedback-into-the-reasoning-layer)
 now forwards validated execution history to the planner and produces a review
 proposal; it does not activate or execute a replacement plan.
+The dashboard's [persistent recovery lifecycle](RECOVERY.md) can now validate,
+activate and execute eligible revisions in the same Isaac Sim session, with
+clarification/review controls and bounded recovery attempts.
 
 See [the architecture review](ARCHITECTURE_REVIEW.md) for layer responsibilities,
 validation fixes, test evidence and the remaining execution/feedback work.

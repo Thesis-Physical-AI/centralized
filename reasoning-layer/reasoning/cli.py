@@ -37,7 +37,7 @@ def add_generation_arguments(parser):
     """Shared provider configuration for the reasoning and connected CLIs."""
     parser.add_argument("--fleet", type=Path, default=ROOT / "mission-orchestrator/robots.json")
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env")
-    parser.add_argument("--model", help="Gemini model ID; otherwise GEMINI_MODEL or gemini-3.5-flash-lite")
+    parser.add_argument("--model", help=f"Gemini model ID; otherwise GEMINI_MODEL or {DEFAULT_MODEL}")
     parser.add_argument("--timeout-ms", type=int, default=45000, help="Timeout per API call")
     parser.add_argument("--max-output-tokens", type=int, default=2048, help="Output token budget per call")
     parser.add_argument("--max-prompt-chars", type=int, default=30000,

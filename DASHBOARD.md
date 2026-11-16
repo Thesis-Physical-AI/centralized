@@ -25,14 +25,17 @@ The Gemini key stays in the existing `.env`; no key is sent to the browser.
 4. Execution results are automatically validated and ingested into the central
    feedback snapshot, including when Isaac's launcher returns nonzero for a
    blocked mission. An absent report is an execution error, not fabricated feedback.
-5. A halted mission triggers one reasoning-only replanning call. The proposal or
-   clarification is shown for review. It is never activated automatically.
+5. In Isaac Sim, a halted mission pauses the same scene for replanning. Ready
+   proposals are orchestrated and validated; eligible revisions continue when
+   automatic recovery is enabled. Clarification and unresolved review wait for
+   your input. See [persistent recovery](RECOVERY.md) for gates and limits.
 
 The page shows stages, the plan, execution outcomes, observation/review summaries,
 replanning questions/tasks and the existing VLM live view. Expand the detailed
-results or run log when needed. Starting a mission can make up to three bounded
-Gemini calls (planning, orchestration and, on a halt, replanning). No automatic
-model retry/format repair was added.
+results or run log when needed. Initial planning uses two bounded Gemini calls.
+Each recovery proposal uses one reasoning call and, when ready, one orchestration
+call. Recovery is limited to three replacement revisions and five clarifications;
+no automatic model retry/format repair was added.
 
 ## Worlds and run modes
 
@@ -40,9 +43,23 @@ The **World** card picks the environment the planner sees. Worlds are JSON files
 in `worlds/`:
 
 - `demo_living_room.json` is the original one-room PuppyPi demo. It is read-only
-  in the dashboard (**Duplicate** makes an editable copy) and is the only world
-  linked to an Isaac Sim scene (`"sim": {"world": "one_room.json"}` in
-  `decentralised/sim/worlds/`).
+  in the dashboard (**Duplicate** makes an editable copy, layout included).
+- **The Isaac Sim scene is generated, not hand-written.** `sim_scene.py` builds it
+  from the selected world every time the world is shown and for every Isaac Sim
+  run (saved as `outputs/dashboard/<run-id>/sim_world.json` and passed to
+  `run_prototype.py --world`). Rooms become 4 × 4 m zones side by side in one walled
+  arena; things in a room sit on a ring around its centre with an approach pose;
+  things on a surface or container rest on top of it; every entity gets a distinct
+  colour/shape, so its VLM phrase ("a red ball", "a blue box") is unique. Doors and
+  carried items are not modelled. Any world that includes `puppypi_1` can run in
+  Isaac Sim. Expand **Isaac Sim scene · auto-generated** in the World card to see it.
+- A world's optional `"sim"` block pins generated values (`room`, `robot_start`,
+  and per-entity `position`, `approach`, `shape`, `description`, `present_in_sim`;
+  `null` removes a value). It sits outside `"world"`, so the planner never sees it.
+  The demo uses it to reproduce its hand-tuned layout exactly (including the
+  absent toy). `decentralised/sim/worlds/one_room.json` is now only the default
+  for running `run_prototype.py` by hand; a test checks the demo still generates
+  the same scene.
 - **New world** / **Edit** opens a form for entities (name, kind, located in or
   door connections) and robots (fleet id, start location), plus a JSON tab for
   extra fields (`weight_kg`, `open`, `passages`, …). Saving runs the same world
@@ -54,7 +71,7 @@ The run mode below the mission chooses what happens after planning:
 
 | Mode | After the dispatch plan |
 |---|---|
-| Isaac Sim | Steps 2–5 above (only for worlds with a sim scene). |
+| Isaac Sim | Steps 2–5 above, in the generated scene (worlds with `puppypi_1`). |
 | External robot | Waits up to an hour for an execution report, then runs feedback and replanning. |
 | Plan only | Stops; status *Plan ready*. Nothing is dispatched. |
 
@@ -76,9 +93,10 @@ a browser Origin (local scripts); a foreign Origin is still refused.
 
 ## Scope and controls
 
-- Isaac Sim runs start a fresh simulation of the world's sim scene. The dashboard
-  does not control an already-running stage; real robots report back through
-  External robot mode.
+- New missions start fresh simulations; recovery revisions reuse that mission's
+  existing scene and robot. The dashboard does not attach to arbitrary running
+  stages. Real robots use External robot mode, which remains proposal-only after
+  feedback until a revision activation transport is implemented for it.
 - In the demo, the toy is deliberately absent from the scene. “Search living_room for the
   toy” exercises the failure/feedback path. “Find the apple” is another starting
   point, but live VLM navigation can be unreliable; use the test perception mode
@@ -91,12 +109,18 @@ a browser Origin (local scripts); a foreign Origin is still refused.
   or network-facing service; do not expose its port to other machines.
 - Existing Isaac Sim builds, the edge virtual environment, local model weights
   and the central Gemini environment are prerequisites. Model startup is limited
-  to 150 seconds and simulator execution to 900 wall-clock seconds per run.
+  to 150 seconds and simulator execution to 900 wall-clock seconds per revision.
+  Operator waits are bounded and keep physics paused.
 - Run data is stored in `outputs/dashboard/<run-id>/`: request, candidate,
   dispatch, simulator output, feedback, replan and logs. Latest finished state is
   restored on dashboard restart; active jobs are not resumed after a crash.
 
 ## Validation
+
+The recovery extension passes 140 central tests and 114 edge tests. It was also
+checked with a visible same-session revision test and a live Gemini/dashboard
+trial; see [recovery verification](RECOVERY.md#verification--16-november-2026).
+The earlier dashboard-only checks below predate revision activation.
 
 118 central tests and 102 edge tests pass, including six dashboard tests covering
 the coordinator with real feedback ingestion, clarification handling, failed

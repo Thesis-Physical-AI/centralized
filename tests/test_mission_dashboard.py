@@ -32,6 +32,7 @@ class FakeConsole(Console):
                  "args": {"object": "toy", "area": "living_room"}}]}
             (folder / "dispatch.json").write_text(json.dumps(plan))
         elif name == "simulation":
+            self.sim_args = [str(a) for a in args]
             target = folder / "simulation"
             target.mkdir()
             steps = [{"mission_id": mid, "plan_revision": 0, "step_id": "S1", "robot_id": "puppypi_1",
@@ -65,6 +66,12 @@ class DashboardTests(unittest.TestCase):
             self.assertIsNone(state["results"]["replan"]["handoff"])
             self.assertEqual(state["completed"], ["planning", "perception", "execution", "feedback", "replanning"])
             self.assertIn("vlm", console.commands)
+            # The simulator gets a scene generated for this run, not a hand-written world file.
+            scene_file = Path(folder) / identity / "sim_world.json"
+            self.assertEqual(console.sim_args[console.sim_args.index("--world") + 1], str(scene_file))
+            scene = json.loads(scene_file.read_text())
+            self.assertEqual(scene["entities"]["apple"]["description"], "a red ball")
+            self.assertFalse(scene["entities"]["toy"]["present_in_sim"])
             restored = Console(folder).state()
             self.assertEqual(restored["id"], identity)
             self.assertEqual(restored["results"]["feedback"]["status"], "HALTED")
@@ -163,10 +170,32 @@ class DashboardTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not in the fleet"):
                 console.save_world({"name": "Bad", "world": {"entities": {"r": {"kind": "room"}},
                                                              "robots": {"ghost_9": {"at": "r"}}}})
-            with self.assertRaisesRegex(ValueError, "no Isaac Sim scene"):
+            self.assertIsNone(saved["sim_scene"])
+            self.assertIn("puppypi_1", saved["sim_issue"])
+            with self.assertRaisesRegex(ValueError, "cannot run in Isaac Sim"):
                 console.submit("Find the mug", "vlm", "kitchen_test", "isaac_sim")
             console.delete_world("kitchen_test")
             self.assertEqual([w["id"] for w in console.list_worlds()], ["demo_living_room", "kitchen_test_2"])
+
+    def test_any_world_with_puppypi_gets_a_generated_scene_and_duplicates_keep_layout(self):
+        with tempfile.TemporaryDirectory() as folder:
+            console = Console(Path(folder) / "out", self.worlds_dir(folder))
+            world = {"entities": {"office": {"kind": "room"}, "desk": {"kind": "surface", "in": "office"},
+                                  "stapler": {"kind": "object", "in": "desk"}},
+                     "robots": {"puppypi_1": {"at": "office"}}}
+            office = console.save_world({"name": "Office", "world": world})
+            self.assertIn("isaac_sim", office["backends"])
+            self.assertEqual(office["sim_scene"]["entities"]["stapler"]["description"], "a red ball")
+            demo = console.get_world("demo_living_room")
+            copy_world = json.loads(json.dumps(demo["world"]))
+            del copy_world["entities"]["crate"]
+            copy = console.save_world({"name": "Demo copy", "world": copy_world, "sim": demo["sim"]})
+            self.assertNotIn("crate", copy["sim"]["entities"])  # overrides for removed entities are dropped
+            self.assertFalse(copy["sim_scene"]["entities"]["toy"]["present_in_sim"])
+            edited = console.save_world({"id": copy["id"], "name": "Demo copy", "world": copy_world})
+            self.assertEqual(edited["sim"], copy["sim"])  # editing keeps the layout
+            with self.assertRaisesRegex(ValueError, "Sim layout is not valid"):
+                console.save_world({"name": "Bad", "world": world, "sim": {"walls": 3}})
 
     def test_plan_only_uses_selected_world_and_stops_after_planning(self):
         with tempfile.TemporaryDirectory() as folder:

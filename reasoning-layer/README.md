@@ -23,9 +23,12 @@ Set `GEMINI_API_KEY` in `.env` to a key created in
 The CLI also accepts `GOOGLE_API_KEY` if `GEMINI_API_KEY` is unset or empty.
 Existing environment variables take precedence over `.env`.
 
-`GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`, which Google lists with a free
-tier. Set it or pass `--model` to use another text-generation model your
+`GEMINI_MODEL` defaults to `gemini-4-hydrogen` for planning, orchestration and
+replanning. A live planning request with this model passed local validation on
+2026-11-16. Set it or pass `--model` to use another text-generation model your
 key can access. Record the selected model for reproducible experiments.
+`gemini-3.5-flash-lite` remains an explicit lighter option. The tested project's
+free-tier quota for `gemini-4-carbon` was zero, so Carbon is not selected by default.
 
 For free-tier-only testing, use a project with billing disabled. The code cannot
 inspect billing status or remaining shared project quota from an API key. Local

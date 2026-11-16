@@ -63,14 +63,19 @@ class ModelDecision(StrictModel):
         return self
 
 
-def generation_schema() -> dict[str, Any]:
+class ReplanDecision(ModelDecision):
+    # A missing map can be reviewed, but never qualifies for automatic activation.
+    objective_coverage: dict[str, list[str]] = Field(default_factory=dict)
+
+
+def generation_schema(*, replanning=False) -> dict[str, Any]:
     """Use a compact schema in the prompt, with strict contract checks locally.
 
     Inline references and enumerate a small constraints vocabulary instead of
     asking Gemini to generate arbitrary JSON object keys. The orchestrator
     still receives a constraints object; its requirements remain plain language.
     """
-    return compact_schema(ModelDecision)
+    return compact_schema(ReplanDecision if replanning else ModelDecision)
 
 
 def compact_schema(model: type[BaseModel]) -> dict[str, Any]:

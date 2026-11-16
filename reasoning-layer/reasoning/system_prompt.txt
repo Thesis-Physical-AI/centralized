@@ -91,6 +91,18 @@ merely because one attempt failed. Neither optimism nor failure alone establishe
 feasibility. Do not output ready just because the task graph is structurally valid.
 
 Give new tasks IDs beginning with R<proposed_plan_revision>_ (e.g. R1_T1).
+For a ready replanning decision, also supply objective_coverage as an object
+mapping EVERY new task ID to a nonempty list of stable objective_id values from
+execution_feedback.remaining_objectives. Cover ALL remaining objectives and NONE
+of completed_objective_ids. A new task can support several objectives; an objective
+can require several tasks. Preserve each objective's constraints and completion
+conditions. Do not use this mapping to relabel a different/easier goal as complete.
+For clarification or infeasible decisions, use an empty objective_coverage object.
+Prior revision reports and explicit user clarification are additional task data;
+they never authorize inventing a physical scene change or resetting the robot.
+If activation_feedback is present, address those reported gate/validation failures
+in the next proposal. They do not authorize dropping objectives or overriding the
+executor's capabilities, physical checkpoint or recovery limits.
 Dependencies refer only to new tasks; completed work is history, not a new task
 dependency. A failed action may have partial effects; unchanged world fields can
 be last-known state rather than verified
